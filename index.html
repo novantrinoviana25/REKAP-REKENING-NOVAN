@@ -724,7 +724,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
  *   PayGate.init({ apiBase: "https://rekap-paygate.NAMA.workers.dev" });
  *
  *   tombolGenerate.onclick = async () => {
- *     await PayGate.requirePayment();   // buka popup QRIS; lanjut hanya kalau sudah lunas
+ *     await PayGate.requirePayment({ pages: jumlahLembar });   // buka popup QRIS; lanjut hanya kalau sudah lunas
  *     jalankanGenerateExcel();          // fungsi generate Anda yang sudah ada
  *   };
  *
@@ -742,15 +742,26 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
   async function api(path, opts) {
     const res = await fetch(cfg.apiBase + path, opts);
-    if (!res.ok) throw new Error("Server error " + res.status);
+    if (!res.ok) {
+      let msg = "Server error " + res.status;
+      if (res.status === 400) { try { const b = await res.json(); if (b && b.message) msg = b.message; } catch (e) {} }
+      throw new Error(msg);
+    }
     return res.json();
   }
 
   const rupiah = (n) => "Rp" + Number(n).toLocaleString("id-ID");
 
-  async function requirePayment() {
+  // Harga untuk sejumlah lembar (hanya untuk ditampilkan; angka final dihitung server saat order dibuat)
+  async function quote(pages) {
+    return api("/api/price?pages=" + encodeURIComponent(pages));
+  }
+
+  async function requirePayment(opts) {
+    const pages = opts && opts.pages;
     // 1) Ada order tersimpan (mis. halaman ter-refresh setelah bayar)? Coba lanjutkan.
-    const saved = readSaved();
+    let saved = readSaved();
+    if (saved && saved.pages !== pages) { clearSaved(); saved = null; }
     if (saved) {
       try {
         const st = await api("/api/status?order_id=" + encodeURIComponent(saved.order_id));
@@ -769,7 +780,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     // 2) Buat tagihan baru
-    const order = await api("/api/order", post({}));
+    const order = await api("/api/order", post({ pages }));
     localStorage.setItem(LS_KEY, JSON.stringify(order));
     return showModal(order);
   }
@@ -783,6 +794,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           <button class="pg-close" aria-label="Tutup">&times;</button>
           <h3>Bayar untuk generate</h3>
           <p class="pg-amount">${rupiah(order.amount)}</p>
+          <p class="pg-pages">${order.pages ? order.pages + " lembar" : ""}</p>
           <img class="pg-qr" alt="QRIS" src="${order.qr_url || ""}" />
           <p class="pg-hint">Scan dengan m-banking atau e-wallet apa pun yang mendukung QRIS.</p>
           <p class="pg-status">Menunggu pembayaran…</p>
@@ -857,7 +869,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       .pg-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px}
       .pg-box{background:#fff;color:#111;border-radius:16px;padding:24px;width:100%;max-width:340px;text-align:center;position:relative;font-family:system-ui,sans-serif}
       .pg-box h3{margin:0 0 4px;font-size:18px}
-      .pg-amount{font-size:22px;font-weight:700;margin:4px 0 12px}
+      .pg-amount{font-size:22px;font-weight:700;margin:4px 0 2px}
+      .pg-pages{font-size:13px;color:#666;margin:0 0 12px}
       .pg-qr{width:240px;height:240px;max-width:100%;border:1px solid #e5e5e5;border-radius:8px}
       .pg-hint{font-size:12px;color:#666;margin:10px 0 6px}
       .pg-status{font-size:14px;font-weight:600;margin:6px 0 2px}
@@ -871,12 +884,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
   function enabled() { return !!cfg.apiBase && !/NAMA-AKUN/.test(cfg.apiBase); }
 
-  window.PayGate = { init, requirePayment, enabled };
+  window.PayGate = { init, requirePayment, quote, enabled };
 })();
 
 // ===== KONFIGURASI PEMBAYARAN =====
-// Ganti dengan URL Worker Anda setelah deploy (lihat README).
-// Selama masih berisi "NAMA-AKUN", pembayaran DINONAKTIFKAN (mode uji).
+// Alamat backend (Cloudflare Worker). Harga bertingkat diatur di backend (wrangler.toml).
 PayGate.init({ apiBase: "https://rekap-paygate.rekapnovanrekor.workers.dev" });
 </script>
 <script type="module">
@@ -990,14 +1002,14 @@ async function handleFiles(fileList) {
   if (S.busy) return;
   S.busy = true; showError(''); show($('s-result'), false); show($('s-make'), false);
   $('status').textContent = ''; $('status').className = 'status';
-  const all = []; const failed = [];
+  const all = []; const failed = []; let totalPages = 0;
   try {
     for (let fi = 0; fi < files.length; fi++) {
       const f = files[fi];
       try {
         const pages = await extractPages(f, (i, n) => setProgress(((fi + i / n) / files.length), 'Membaca ' + f.name + ' · halaman ' + i + ' dari ' + n));
         const st = RekapCore.parseStatements(pages);
-        if (!st.length) failed.push(f.name);
+        if (!st.length) failed.push(f.name); else totalPages += pages.length;
         st.forEach((s) => { s.file = f.name; all.push(s); });
       } catch (err) {
         const name = err && err.name;
@@ -1017,13 +1029,18 @@ async function handleFiles(fileList) {
     return;
   }
   if (failed.length) showError('<b>Sebagian file dilewati:</b><ul>' + failed.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>');
-  S.stmts = all;
+  S.stmts = all; S.totalPages = totalPages;
   const accts = [];
   all.forEach((s) => { if (!accts.includes(s.accountNo)) accts.push(s.accountNo); });
   S.accounts = accts; S.account = accts[0];
   S.acctInfo = {};
   all.forEach((s) => { if (!S.acctInfo[s.accountNo]) S.acctInfo[s.accountNo] = { bank: s.bank, name: s.name }; });
   renderResult();
+  if (window.PayGate && PayGate.enabled()) {
+    const stq = $('status'); stq.className = 'status'; stq.textContent = totalPages + ' lembar PDF · menghitung biaya…';
+    PayGate.quote(totalPages).then((q) => { stq.textContent = q.pages + ' lembar PDF · biaya Rp' + Number(q.amount).toLocaleString('id-ID'); })
+      .catch(() => { stq.textContent = totalPages + ' lembar PDF'; });
+  }
 }
 
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -1114,7 +1131,7 @@ async function make() {
     S.paying = true;
     const pst = $('status'); pst.className = 'status'; pst.textContent = 'Menunggu pembayaran…';
     try {
-      await PayGate.requirePayment();
+      await PayGate.requirePayment({ pages: S.totalPages });
     } catch (e) {
       const m = (e && e.message) || '';
       pst.className = 'status bad';
