@@ -857,6 +857,182 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.RekapCore = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
+<script>
+/*
+ * payment-gate.js — modul "bayar dulu baru generate" via QRIS (tanpa login)
+ *
+ * Pakai:
+ *   (muat file payment-gate.js)
+ *   PayGate.init({ apiBase: "https://rekap-paygate.NAMA.workers.dev" });
+ *
+ *   tombolGenerate.onclick = async () => {
+ *     await PayGate.requirePayment({ pages: jumlahLembar });   // buka popup QRIS; lanjut hanya kalau sudah lunas
+ *     jalankanGenerateExcel();          // fungsi generate Anda yang sudah ada
+ *   };
+ *
+ * requirePayment() menolak (reject) kalau user menutup popup / pembayaran kedaluwarsa.
+ */
+(function () {
+  const LS_KEY = "paygate_order";
+  let cfg = { apiBase: "", pollMs: 3000 };
+
+  function init(options) {
+    cfg = Object.assign(cfg, options || {});
+    cfg.apiBase = cfg.apiBase.replace(/\/$/, "");
+    injectStyles();
+  }
+
+  async function api(path, opts) {
+    const res = await fetch(cfg.apiBase + path, opts);
+    if (!res.ok) {
+      let msg = "Server error " + res.status;
+      if (res.status === 400) { try { const b = await res.json(); if (b && b.message) msg = b.message; } catch (e) {} }
+      throw new Error(msg);
+    }
+    return res.json();
+  }
+
+  const rupiah = (n) => "Rp" + Number(n).toLocaleString("id-ID");
+
+  // Harga untuk sejumlah lembar (hanya untuk ditampilkan; angka final dihitung server saat order dibuat)
+  async function quote(pages) {
+    return api("/api/price?pages=" + encodeURIComponent(pages));
+  }
+
+  async function requirePayment(opts) {
+    const pages = opts && opts.pages;
+    // 1) Ada order tersimpan (mis. halaman ter-refresh setelah bayar)? Coba lanjutkan.
+    let saved = readSaved();
+    if (saved && saved.pages !== pages) { clearSaved(); saved = null; }
+    if (saved) {
+      try {
+        const st = await api("/api/status?order_id=" + encodeURIComponent(saved.order_id));
+        if (st.status === "paid") {
+          const c = await api("/api/claim", post({ order_id: saved.order_id }));
+          if (c.ok) return saved.order_id;
+          clearSaved();
+        } else if (st.status === "pending" && saved.qr_url && !isExpired(saved.expiry_time)) {
+          return showModal(saved);
+        } else {
+          clearSaved();
+        }
+      } catch (e) {
+        clearSaved();
+      }
+    }
+
+    // 2) Buat tagihan baru
+    const order = await api("/api/order", post({ pages }));
+    localStorage.setItem(LS_KEY, JSON.stringify(order));
+    return showModal(order);
+  }
+
+  function showModal(order) {
+    return new Promise((resolve, reject) => {
+      const overlay = document.createElement("div");
+      overlay.className = "pg-overlay";
+      overlay.innerHTML = `
+        <div class="pg-box" role="dialog" aria-modal="true">
+          <button class="pg-close" aria-label="Tutup">&times;</button>
+          <h3>Bayar untuk generate</h3>
+          <p class="pg-amount">${rupiah(order.amount)}</p>
+          <p class="pg-pages">${order.pages ? order.pages + " lembar" : ""}</p>
+          <img class="pg-qr" alt="QRIS" src="${order.qr_url || ""}" />
+          <p class="pg-hint">Scan dengan m-banking atau e-wallet apa pun yang mendukung QRIS.</p>
+          <p class="pg-status">Menunggu pembayaran…</p>
+          <p class="pg-timer"></p>
+        </div>`;
+      document.body.appendChild(overlay);
+
+      const statusEl = overlay.querySelector(".pg-status");
+      const timerEl = overlay.querySelector(".pg-timer");
+      let stopped = false;
+
+      function finish(fn, val) {
+        if (stopped) return;
+        stopped = true;
+        clearInterval(poll);
+        clearInterval(tick);
+        overlay.remove();
+        fn(val);
+      }
+
+      overlay.querySelector(".pg-close").onclick = () => finish(reject, new Error("Pembayaran dibatalkan"));
+
+      const tick = setInterval(() => {
+        if (!order.expiry_time) return;
+        const left = Math.max(0, parseWib(order.expiry_time) - Date.now());
+        const m = Math.floor(left / 60000);
+        const s = String(Math.floor((left % 60000) / 1000)).padStart(2, "0");
+        timerEl.textContent = "Berlaku " + m + ":" + s;
+      }, 1000);
+
+      const poll = setInterval(async () => {
+        try {
+          const st = await api("/api/status?order_id=" + encodeURIComponent(order.order_id));
+          if (st.status === "paid") {
+            statusEl.textContent = "Pembayaran diterima ✓";
+            const c = await api("/api/claim", post({ order_id: order.order_id }));
+            if (c.ok) return finish(resolve, order.order_id);
+            statusEl.textContent = "Gagal memvalidasi pembayaran";
+          } else if (["expired", "failed"].includes(st.status)) {
+            clearSaved();
+            statusEl.textContent = "Tagihan kedaluwarsa. Tutup lalu coba lagi.";
+            clearInterval(poll);
+          }
+        } catch (e) {
+          /* koneksi putus sesaat, coba lagi di polling berikutnya */
+        }
+      }, cfg.pollMs);
+    });
+  }
+
+  // ---- util ----
+  function post(body) {
+    return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  }
+  function readSaved() {
+    try { return JSON.parse(localStorage.getItem(LS_KEY)); } catch (e) { return null; }
+  }
+  function clearSaved() {
+    try { localStorage.removeItem(LS_KEY); } catch (e) {}
+  }
+  // Midtrans mengirim waktu format "YYYY-MM-DD HH:mm:ss" dalam WIB (UTC+7)
+  function parseWib(s) {
+    return new Date(String(s).replace(" ", "T") + "+07:00").getTime();
+  }
+  function isExpired(s) {
+    return s ? parseWib(s) < Date.now() : false;
+  }
+
+  function injectStyles() {
+    if (document.getElementById("pg-styles")) return;
+    const css = `
+      .pg-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px}
+      .pg-box{background:#fff;color:#111;border-radius:16px;padding:24px;width:100%;max-width:340px;text-align:center;position:relative;font-family:system-ui,sans-serif}
+      .pg-box h3{margin:0 0 4px;font-size:18px}
+      .pg-amount{font-size:22px;font-weight:700;margin:4px 0 2px}
+      .pg-pages{font-size:13px;color:#666;margin:0 0 12px}
+      .pg-qr{width:240px;height:240px;max-width:100%;border:1px solid #e5e5e5;border-radius:8px}
+      .pg-hint{font-size:12px;color:#666;margin:10px 0 6px}
+      .pg-status{font-size:14px;font-weight:600;margin:6px 0 2px}
+      .pg-timer{font-size:12px;color:#888;margin:0}
+      .pg-close{position:absolute;top:8px;right:12px;border:0;background:none;font-size:26px;cursor:pointer;color:#888}`;
+    const el = document.createElement("style");
+    el.id = "pg-styles";
+    el.textContent = css;
+    document.head.appendChild(el);
+  }
+
+  function enabled() { return !!cfg.apiBase && !/NAMA-AKUN/.test(cfg.apiBase); }
+
+  window.PayGate = { init, requirePayment, quote, enabled };
+})();
+
+// ===== KONFIGURASI PEMBAYARAN =====
+// Alamat backend (Cloudflare Worker). Harga bertingkat diatur di backend (wrangler.toml).
+PayGate.init({ apiBase: "https://rekap-paygate.rekapnovanrekor.workers.dev" });
+</script>
 <script type="module">
 const pdfjsLib=(()=>{/**
  * @licstart The following is the entire license notice for the
@@ -968,7 +1144,7 @@ async function handleFiles(fileList) {
   if (S.busy) return;
   S.busy = true; showError(''); show($('s-result'), false); show($('s-make'), false);
   $('status').textContent = ''; $('status').className = 'status';
-  const all = []; const failed = [];
+  const all = []; const failed = []; let totalPages = 0;
   try {
     for (let fi = 0; fi < files.length; fi++) {
       const f = files[fi];
@@ -976,7 +1152,7 @@ async function handleFiles(fileList) {
         const pages = await extractPages(f, (i, n) => setProgress(((fi + i / n) / files.length), 'Membaca ' + f.name + ' · halaman ' + i + ' dari ' + n));
         if (RekapCore.isImageOnly(pages)) { failed.push(f.name + ' (PDF berupa gambar/foto, tidak ada teks yang bisa dibaca. Unduh e-statement aslinya dari aplikasi bank)'); continue; }
         const st = RekapCore.parseStatements(pages);
-        if (!st.length) failed.push(f.name);
+        if (!st.length) failed.push(f.name); else totalPages += pages.length;
         st.forEach((s) => { s.file = f.name; all.push(s); });
       } catch (err) {
         const name = err && err.name;
@@ -996,13 +1172,18 @@ async function handleFiles(fileList) {
     return;
   }
   if (failed.length) showError('<b>Sebagian file dilewati:</b><ul>' + failed.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>');
-  S.stmts = all;
+  S.stmts = all; S.totalPages = totalPages;
   const accts = [];
   all.forEach((s) => { if (!accts.includes(s.accountNo)) accts.push(s.accountNo); });
   S.accounts = accts; S.account = accts[0];
   S.acctInfo = {};
   all.forEach((s) => { if (!S.acctInfo[s.accountNo]) S.acctInfo[s.accountNo] = { bank: s.bank, name: s.name }; });
   renderResult();
+  if (window.PayGate && PayGate.enabled()) {
+    const stq = $('status'); stq.className = 'status'; stq.textContent = totalPages + ' lembar PDF · menghitung biaya…';
+    PayGate.quote(totalPages).then((q) => { stq.textContent = q.pages + ' lembar PDF · biaya Rp' + Number(q.amount).toLocaleString('id-ID'); })
+      .catch(() => { stq.textContent = totalPages + ' lembar PDF'; });
+  }
 }
 
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -1088,6 +1269,21 @@ function fileName(list) {
 async function make() {
   const list = S.used;
   if (!list.length) return;
+  if (window.PayGate && PayGate.enabled()) {
+    if (S.paying) return;
+    S.paying = true;
+    const pst = $('status'); pst.className = 'status'; pst.textContent = 'Menunggu pembayaran…';
+    try {
+      await PayGate.requirePayment({ pages: S.totalPages });
+    } catch (e) {
+      const m = (e && e.message) || '';
+      pst.className = 'status bad';
+      pst.textContent = /Server error|Failed to fetch|NetworkError/i.test(m) ? 'Server pembayaran tidak bisa dihubungi. Coba lagi sebentar.' : (m || 'Pembayaran belum selesai.');
+      return;
+    } finally {
+      S.paying = false;
+    }
+  }
   const st = $('status'); st.className = 'status'; st.textContent = 'Menyusun file Excel…';
   $('make').disabled = true;
   try {
