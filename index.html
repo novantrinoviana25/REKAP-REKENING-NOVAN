@@ -1301,6 +1301,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.RekapCore = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
+<script src="config.js"></script>
 <script>
 /*
  * payment-gate.js — modul "bayar dulu baru generate" via QRIS (tanpa login)
@@ -1475,7 +1476,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
 // ===== KONFIGURASI PEMBAYARAN =====
 // Alamat backend (Cloudflare Worker). Harga bertingkat diatur di backend (wrangler.toml).
-PayGate.init({ apiBase: "https://rekap-paygate.rekapnovanrekor.workers.dev" });
+var DEFAULT_API = "https://rekap-paygate.rekapnovanrekor.workers.dev";
+// Pengaturan on/off ada di file config.js (satu folder dengan index.html). Kalau config.js hilang, QRIS tetap AKTIF.
+var C = window.REKAP_CONFIG;
+PayGate.init({ apiBase: C ? (C.qris ? (C.apiBase || DEFAULT_API) : "") : DEFAULT_API });
 </script>
 <script type="module">
 const pdfjsLib=(()=>{/**
