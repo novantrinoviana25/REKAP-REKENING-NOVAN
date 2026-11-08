@@ -138,6 +138,34 @@ table.prev th { color: var(--muted); font-weight: 500; }
 .status { font-size: 14px; min-height: 1.5em; }
 .status.good { color: var(--accent); font-weight: 500; }
 .status.bad { color: var(--warn); font-weight: 500; }
+.an { border-top: 1px solid var(--rule); padding-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+.an h3 { margin: 0; font: 600 15px/1.3 var(--font-display); }
+.an .verdict { border-radius: 6px; padding: 10px 12px; background: var(--accent-soft); color: var(--ink); font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+.an .verdict.unclear { background: var(--amber-soft); }
+.an .verdict b { font-weight: 600; }
+.an .verdict small, .an .hint2 { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.an .alert { border-radius: 6px; padding: 10px 12px; background: var(--warn-soft); font-size: 13.5px; display: flex; flex-direction: column; gap: 4px; }
+.an .grp { display: flex; flex-direction: column; gap: 6px; }
+.an .grp > .gt { font: 600 12px/1 var(--font-body); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.an details { border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); }
+.an summary { list-style: none; cursor: pointer; padding: 9px 12px; display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 13.5px; }
+.an summary::-webkit-details-marker { display: none; }
+.an summary .amt { font-family: var(--font-num); font-size: 12.5px; text-align: right; }
+.an summary .bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--rule); overflow: hidden; }
+.an summary .bar i { display: block; height: 100%; background: var(--accent); }
+.an .g-k .bar i { background: var(--amber); }
+.an .loanbox { border: 1px solid var(--rule-strong); border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 10px; background: var(--paper); }
+.an .lsum { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.an .lsum > div { background: var(--bg); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.an .lsum b { font: 600 15px/1.2 var(--font-num); }
+.an .lsum small { color: var(--muted); font-size: 12px; }
+.an .lrow { display: grid; grid-template-columns: 1fr auto; gap: 8px; font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--rule); }
+.an .lrow .amt { font-family: var(--font-num); font-size: 12px; text-align: right; }
+.an .items { margin: 0; padding: 0 12px 10px; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.an .items li { display: grid; grid-template-columns: 1fr auto; gap: 8px; color: var(--muted); }
+.an .items li span:first-child { overflow-wrap: anywhere; }
+.an .items li .amt { font-family: var(--font-num); color: var(--ink); white-space: nowrap; }
+
 .notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 13px; }
 .notes b { color: var(--ink); font-weight: 500; }
 </style>
@@ -146,7 +174,7 @@ table.prev th { color: var(--muted); font-weight: 500; }
   <header class="top">
     <p class="kicker">FORM ANALISA · Aktivitas Saldo</p>
     <h1>Rekap Rekening Koran</h1>
-    <p class="lede">Upload PDF rekening koran BRI, Mandiri, BCA, BSI, atau BJB. Tanggal, debet, dan kredit langsung masuk ke template Excel, rumus dan lampiran rekap tetap utuh.</p>
+    <p class="lede">Upload PDF rekening koran BRI, Mandiri, BCA, BSI, BJB, atau SeaBank. Tanggal, debet, dan kredit langsung masuk ke template Excel, rumus dan lampiran rekap tetap utuh.</p>
     <p class="privacy">PDF dibaca di perangkatmu sendiri dan tidak dikirim ke server mana pun.</p>
   </header>
 
@@ -186,6 +214,7 @@ table.prev th { color: var(--muted); font-weight: 500; }
         <select id="acct-select"></select>
       </div>
       <div class="months" id="months"></div>
+      <div class="an" id="analysis" hidden></div>
     </section>
 
     <section class="card" id="s-make" hidden aria-labelledby="h-make">
@@ -290,7 +319,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           var nums = l.items.filter(function (t) { return t.x > W * 0.42 && NUM_EN.test(t.str.trim()); }).map(function (t) { return numEN(t.str.trim()); });
           if (nums.length >= 3) {
             var n3 = nums.slice(-3);
-            cur.txs.push({ day: +dm[1], mon: +dm[2], debet: n3[0], kredit: n3[1], saldo: n3[2] });
+            cur.txs.push({ _y: l.y, _pg: pi, day: +dm[1], mon: +dm[2], debet: n3[0], kredit: n3[1], saldo: n3[2] });
           }
         }
         if (/Total Transaksi Debet/.test(l.text)) {
@@ -351,7 +380,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         });
         if (!d) return;
         var dm = d.str.trim().match(DT_TXT), v = numID(amt);
-        cur.txs.push({ day: +dm[1], mon: MON3[dm[2].toLowerCase()], debet: amt.charAt(0) === '-' ? v : 0, kredit: amt.charAt(0) === '-' ? 0 : v, saldo: saldo });
+        cur.txs.push({ _y: l.y, _pg: pi, day: +dm[1], mon: MON3[dm[2].toLowerCase()], debet: amt.charAt(0) === '-' ? v : 0, kredit: amt.charAt(0) === '-' ? 0 : v, saldo: saldo });
       });
       if (onProgress) onProgress(pi + 1, pages.length);
     });
@@ -391,7 +420,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (!mut) return;
         var isDb = l.items.some(function (t) { return t.x > 436 && t.x < 470 && /^DB$/i.test(t.str.trim()); });
         var v = numEN(mut.str);
-        cur.txs.push({ day: +parts[0], mon: +parts[1], debet: isDb ? v : 0, kredit: isDb ? 0 : v, saldo: saldoIt ? numEN(saldoIt.str) : null });
+        cur.txs.push({ _y: l.y, _pg: pi, day: +parts[0], mon: +parts[1], debet: isDb ? v : 0, kredit: isDb ? 0 : v, saldo: saldoIt ? numEN(saldoIt.str) : null });
       });
       if (onProgress) onProgress(pi + 1, pages.length);
     });
@@ -432,7 +461,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           var ns = combineNums(l.items, 340).sort(function (a, b) { return a.right - b.right; });
           if (ns.length >= 3) {
             var n3 = ns.slice(-3), dm = dt.str.trim().match(DT_TXT);
-            cur.txs.push({ day: +dm[1], mon: MON3[dm[2].toLowerCase()], debet: n3[0].val, kredit: n3[1].val, saldo: n3[2].val });
+            cur.txs.push({ _y: l.y, _pg: pi, day: +dm[1], mon: MON3[dm[2].toLowerCase()], debet: n3[0].val, kredit: n3[1].val, saldo: n3[2].val });
           }
           return;
         }
@@ -482,7 +511,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (nums.length < 2) return;
         var saldo = numEN(nums[nums.length - 1].str), a = nums[0].str.trim(), v = numEN(a.replace('-', ''));
         var dm = dt.str.trim().match(DT_TXT);
-        cur.txs.push({ day: +dm[1], mon: MON3[dm[2].toLowerCase()], debet: a.charAt(0) === '-' ? v : 0, kredit: a.charAt(0) === '-' ? 0 : v, saldo: saldo });
+        cur.txs.push({ _y: l.y, _pg: pi, day: +dm[1], mon: MON3[dm[2].toLowerCase()], debet: a.charAt(0) === '-' ? v : 0, kredit: a.charAt(0) === '-' ? 0 : v, saldo: saldo });
       });
       if (onProgress) onProgress(pi + 1, pages.length);
     });
@@ -544,7 +573,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         });
         if (!d) return;
         var dm = d.str.trim().match(DT_KOP);
-        cur.txs.push({ day: +dm[1], mon: MON3[dm[2].toLowerCase()], debet: numEN(nums[0].str), kredit: numEN(nums[1].str), saldo: numEN(nums[2].str) });
+        cur.txs.push({ _y: l.y, _pg: pi, day: +dm[1], mon: MON3[dm[2].toLowerCase()], debet: numEN(nums[0].str), kredit: numEN(nums[1].str), saldo: numEN(nums[2].str) });
       });
       if (onProgress) onProgress(pi + 1, pages.length);
     });
@@ -581,9 +610,47 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (!sd || !am) return;
         var isD = /D$/.test(am.str.trim()) || l.items.some(function (t) { return t.x > 400 && t.x < 570 && t.str.trim() === 'D'; });
         var v = numEN(am.str.replace(/\s*D$/, '')), p = dt.str.trim().split('/');
-        cur.txs.push({ day: +p[0], mon: +p[1], debet: isD ? v : 0, kredit: isD ? 0 : v, saldo: numEN(sd.str) });
+        cur.txs.push({ _y: l.y, _pg: pi, day: +p[0], mon: +p[1], debet: isD ? v : 0, kredit: isD ? 0 : v, saldo: numEN(sd.str) });
       });
       if (sum && sum.opening != null && sum.closing != null) cur.summary = sum;
+      if (onProgress) onProgress(pi + 1, pages.length);
+    });
+    return stmts;
+  }
+
+
+  /* ---------------- SeaBank ---------------- */
+  function parseSeaPages(pages, onProgress) {
+    var stmts = [], cur = null;
+    pages.forEach(function (page, pi) {
+      var lines = groupLines(page), text = pageText(lines);
+      if (/RINGKASAN REKENING/.test(text)) {
+        cur = newStmt('SEABANK', pi + 1); stmts.push(cur);
+        var pm = text.match(/\d{1,2}\s+([A-Za-z]{3})\s+(\d{4})\s+sampai\s+\d{1,2}\s+([A-Za-z]{3})\s+(\d{4})/);
+        if (pm) { cur.month = MON3[pm[3].toLowerCase()]; cur.year = +pm[4]; }
+        lines.forEach(function (l, li) {
+          if (/NO\.\s*REKENING SEABANK/.test(l.text)) {
+            var m = l.text.match(/SEABANK:\s*(\d+)/); if (m) cur.accountNo = m[1];
+            if (lines[li - 1]) cur.name = txt(lines[li - 1].items.filter(function (t) { return t.x < 300; }));
+          }
+          if (/^TABUNGAN\b/.test(l.text) && !cur.summary) {
+            var n = l.items.filter(function (t) { return /^[\d.]+$/.test(t.str.trim()); });
+            if (n.length === 4) cur.summary = { opening: numID(n[0].str + ',00'), debet: numID(n[1].str + ',00'), kredit: numID(n[2].str + ',00'), closing: numID(n[3].str + ',00') };
+          }
+        });
+      }
+      if (!cur) return;
+      cur.pages++;
+      lines.forEach(function (l) {
+        var dt = l.items.filter(function (t) { return t.x < 70 && /^\d{2}\s+[A-Za-z]{3}$/.test(t.str.trim()); })[0];
+        if (!dt) return;
+        var nums = l.items.filter(function (t) { return t.x > 250 && /^[\d.]+$/.test(t.str.trim()); });
+        if (nums.length < 2) return;
+        var sd = nums[nums.length - 1], am = nums[nums.length - 2];
+        if (right(sd) < 470) return;
+        var v = numID(am.str + ',00'), isOut = right(am) < 390, dm = dt.str.trim().split(/\s+/);
+        cur.txs.push({ _y: l.y, _pg: pi, day: +dm[0], mon: MON3[dm[1].toLowerCase()], debet: isOut ? v : 0, kredit: isOut ? 0 : v, saldo: numID(sd.str + ',00') });
+      });
       if (onProgress) onProgress(pi + 1, pages.length);
     });
     return stmts;
@@ -596,11 +663,147 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return n < 20;
   }
 
+
+  /* keterangan transaksi: teks di sekitar baris transaksi (band vertikal), tanpa angka/tanggal */
+  var NOISE = /^[\d.,\-+\/:\s]+(?:\s?[DC]B?)?$|^(?:WIB|DB|CR|D|K)$/;
+  function attachDescs(stmts, pages) {
+    stmts.forEach(function (s) {
+      var by = {};
+      s.txs.forEach(function (t) { if (t._pg != null) (by[t._pg] = by[t._pg] || []).push(t); });
+      Object.keys(by).forEach(function (pg) {
+        var arr = by[pg].slice().sort(function (a, b) { return b._y - a._y; });
+        var items = pages[+pg].items.filter(function (i) { return i.str && i.str.trim() && !NOISE.test(i.str.trim()); });
+        arr.forEach(function (t, i) {
+          var top = i === 0 ? t._y + 22 : (arr[i - 1]._y + t._y) / 2;
+          var bot = i === arr.length - 1 ? t._y - 22 : (t._y + arr[i + 1]._y) / 2;
+          var sel = items.filter(function (it) { return it.y <= top && it.y > bot; });
+          sel.sort(function (a, b) { return Math.abs(b.y - a.y) > 2.2 ? b.y - a.y : a.x - b.x; });
+          t.desc = sel.map(function (it) { return it.str.trim(); }).join(' ')
+            .replace(/\b\d{1,2} [A-Za-z]{3} \d{4},?/g, ' ').replace(/\b\d{2} (?:JAN|FEB|MAR|APR|MAY|MEI|JUN|JUL|AUG|AGU|SEP|OCT|OKT|NOV|DEC|DES)\b/g, ' ').replace(/Transaction Date Transaction Description User ID Debit Credit Balance|Date & Time Detail Transaksi No Reff Debit Kredit Saldo|SALDO AWAL|Saldo Awal|Transfer Fee/gi, ' ')
+            .replace(/\s+/g, ' ').trim().slice(0, 200);
+        });
+      });
+    });
+  }
+
+  /* ---------------- analisa rekening (perkiraan berbasis kata kunci) ---------------- */
+  var KW = {
+    pencairan: /pencairan|droping|dropping|realisasi (?:kredit|pinjaman)|cair(?:nya)?\b|fasilitas (?:kredit|pinjaman)|kredit (?:modal|usaha|investasi|multiguna)|\bkur\b|\bkpr\b|pinjaman|pinjol|akulaku|kredivo|adakami|kredit ?pintar|indodana|home ?credit|danamas|julo|easycash|uang ?cepat|\bloan\b|plafon|\bkta\b|shopee ?pay ?later|spinjam|gopay ?later|pegadaian/i,
+    angsuran: /spinjam|spaylater|seabank pinjam|repayment|paid ?off|pinang|pembayaran pinjaman|angsuran|cicilan|pelunasan|\bangs\b|bayar (?:pinjaman|kredit)|\bkredit\b|leasing|multi ?finance|\bbfi\b|\badira\b|\bfif\b|\bwom\b|mandala|mega ?finance|oto ?finance|home ?credit|akulaku|kredivo|adakami|indodana|pegadaian|kredit ?pintar|\bloan\b|tagihan (?:kartu kredit|kk)|kartu kredit|pay ?later/i,
+    gaji: /gaji|salary|payroll|honor|tunjangan|insentif|bonus|belanja pegawai|\bspan\b|\btpp\b|\bthr\b|upah/i,
+    setorTunai: /setor(?:an)? tunai|\bcdm\b|cash ?deposit|setoran/i,
+    bunga: /bunga|interest|jasa giro/i,
+    tarikTunai: /\btarik\b|withdrawal|tarik(?:an)? tunai|penarikan tunai|tarikan atm|\bcash ?withdraw|tarik tunai|penarikan\b/i,
+    agen: /brilink|laku ?pandai|agen\b|\bfeebrilink/i,
+    biaya: /biaya|\bfee\b|admin|adm\b|pajak|\btax\b|materai|meterai|charge|iuran/i,
+    investasi: /\bset\. |setoran bulanan|beli ?emas|emas|reksa ?dana|saham|deposito|tabungan berjangka|investasi|bibit|bareksa|ajaib|pluang|stockbit|obligasi|sbn\b|asuransi|dplk|polis|premi/i,
+    konsumtif: /kartu debit|tokopedia|shopee|lazada|blibli|bukalapak|tiktok|gojek|gofood|grab|maxim|\bovo\b|\bdana\b|gopay|linkaja|shopeepay|top ?up|e-?wallet|pulsa|paket data|telkomsel|indosat|\bxl\b|\baxis\b|by\.?u\b|\bsmartfren\b|token ?(?:pln|listrik)|\bpln\b|listrik|indomaret|alfamart|alfamidi|supermarket|hypermart|giant|superindo|\bmart\b|resto|restoran|cafe|kafe|kopi|coffee|food|makan|warung|bakso|mie ayam|netflix|spotify|youtube|vidio|steam|game|google ?play|app ?store|bioskop|xxi|tiket|traveloka|agoda|hotel|pesawat|kereta|\bqr\b|qris|merchant|transaksi debit|pembelian|belanja|indihome|first ?media|biznet|wifi|pdam|bpjs|zakat|infaq|sedekah|donasi|kost|kontrakan|sekolah|spp\b|wisata|salon|barber|apotek|klinik|rumah sakit|\brs\b|pegipegi/i,
+    produktif: /supplier|suplier|bahan|material|stok|grosir|\bcv\.?\s|\bpt\.?\s|\bud\.?\s|kontrak|proyek|project|invoice|\binv\b|operasional|ongkir|ekspedisi|\bjne\b|j&t|sicepat|anteraja|pupuk|bibit tanaman|pakan|\balat\b|mesin|usaha|dagang|modal kerja|pembelian barang|pembayaran barang|vendor|penjualan|omzet|sewa (?:toko|gudang|ruko|kios|lahan)|toko|bengkel|konveksi|percetakan|sparepart|spare ?part|pelunasan (?:barang|order)|\bpo\b/i,
+    transferMasuk: /trf dari|transfer dari|dana masuk|trsf e-?banking cr|inhousetrf dari|\bcr\b|\bbi-?fast\b.*dari|incoming|kiriman|terima/i,
+    transferKeluar: /trf ke|transfer ke|dana keluar|trsf e-?banking db|inhousetrf ke|bi-?fast|\bdb\b|\bke\b|transfer\b|\btrf\b|\bsknbi|\brtgs/i
+  };
+  var CAT_D = ['agen', 'angsuran', 'konsumtif', 'produktif', 'investasi', 'tarikTunai', 'biaya', 'transferKeluar', 'lain'];
+  var CAT_K = ['pencairan', 'agen', 'gaji', 'setorTunai', 'bunga', 'transferMasuk', 'lain'];
+  var CAT_LABEL = {
+    angsuran: 'Angsuran/pelunasan pinjaman', konsumtif: 'Konsumtif', produktif: 'Produktif/usaha', investasi: 'Investasi/tabungan',
+    tarikTunai: 'Tarik tunai', biaya: 'Biaya & pajak', transferKeluar: 'Transfer keluar (tujuan tidak jelas)', lain: 'Belum terklasifikasi',
+    pencairan: 'Pencairan pinjaman', agen: 'Transaksi agen/komisi (BRILink dsb.)', gaji: 'Gaji/pendapatan rutin', setorTunai: 'Setor tunai', bunga: 'Bunga', transferMasuk: 'Transfer masuk (sumber tidak jelas)'
+  };
+
+  var LENDERS = [
+    ['SPinjam (SeaBank)', /spinjam|seabank pinjam/i], ['SPayLater', /spaylater|shopee ?pay ?later/i], ['GoPay Later', /gopay ?later/i],
+    ['Kredivo', /kredivo/i], ['Akulaku', /akulaku/i], ['AdaKami', /adakami/i], ['Home Credit', /home ?credit/i], ['Indodana', /indodana/i],
+    ['Kredit Pintar', /kredit ?pintar/i], ['JULO', /\bjulo\b/i], ['EasyCash', /easy ?cash/i], ['Danamas', /danamas/i],
+    ['BFI Finance', /\bbfi\b/i], ['Adira Finance', /\badira\b/i], ['FIF/Astra', /\bfif\b|astra ?credit|\bacc\b/i], ['WOM Finance', /\bwom\b/i],
+    ['Mandala Finance', /mandala/i], ['Mega Finance', /mega ?finance/i], ['OTO/SMS Finance', /\boto ?finance|\bsms ?finance/i],
+    ['Pegadaian', /pegadaian/i], ['BRI (Pinang/KUR)', /pinang|\bkur\b|\bbri\b.*(?:repayment|paid ?off|pinjaman)/i], ['Bank Sampoerna', /sampoerna/i],
+    ['KPR', /\bkpr\b/i], ['Kartu kredit', /kartu kredit|tagihan kk/i], ['Leasing/multifinance', /leasing|multi ?finance/i]
+  ];
+  function lenderOf(d) {
+    for (var i = 0; i < LENDERS.length; i++) if (LENDERS[i][1].test(d)) return LENDERS[i][0];
+    return 'Tidak teridentifikasi';
+  }
+  function classify(t) {
+    var d = t.desc || '';
+    if (t.kredit) {
+      if (KW.pencairan.test(d)) return 'pencairan';
+      if (KW.agen.test(d)) return 'agen';
+      if (KW.bunga.test(d)) return 'bunga';
+      if (KW.gaji.test(d)) return 'gaji';
+      if (KW.setorTunai.test(d)) return 'setorTunai';
+      if (KW.transferMasuk.test(d)) return 'transferMasuk';
+      return 'lain';
+    }
+    if (KW.agen.test(d)) return 'agen';
+    if (KW.biaya.test(d) && !KW.konsumtif.test(d) && !KW.angsuran.test(d)) return 'biaya';
+    if (KW.angsuran.test(d)) return 'angsuran';
+    if (KW.tarikTunai.test(d)) return 'tarikTunai';
+    if (KW.investasi.test(d)) return 'investasi';
+    if (KW.konsumtif.test(d)) return 'konsumtif';
+    if (KW.produktif.test(d)) return 'produktif';
+    if (KW.transferKeluar.test(d)) return 'transferKeluar';
+    return 'lain';
+  }
+  function dayOrd(t, s) { var y = s.year - (t.mon > s.month ? 1 : 0); return Math.round(Date.UTC(y, t.mon - 1, t.day) / 86400000); }
+
+  function analyze(stmts) {
+    var all = [];
+    stmts.forEach(function (s) { s.txs.forEach(function (t) { all.push({ t: t, s: s, ord: dayOrd(t, s) }); }); });
+    var out = { debit: {}, kredit: {}, totD: 0, totK: 0, nD: 0, nK: 0, passThrough: [], months: stmts.length };
+    CAT_D.forEach(function (c) { out.debit[c] = { cat: c, label: CAT_LABEL[c], total: 0, n: 0, items: [] }; });
+    CAT_K.forEach(function (c) { out.kredit[c] = { cat: c, label: CAT_LABEL[c], total: 0, n: 0, items: [] }; });
+    all.forEach(function (x) {
+      var t = x.t, c = classify(t), isK = t.kredit > 0, v = isK ? t.kredit : t.debet;
+      if (!v) return;
+      var g = (isK ? out.kredit : out.debit)[c];
+      g.total += v; g.n++; g.items.push({ day: t.day, mon: t.mon, v: v, desc: t.desc || '' });
+      if (isK) { out.totK += v; out.nK++; } else { out.totD += v; out.nD++; }
+      x.cat = c;
+    });
+    ['debit', 'kredit'].forEach(function (k) { Object.keys(out[k]).forEach(function (c) { out[k][c].items.sort(function (a, b) { return b.v - a.v; }); }); });
+    // kredit besar yang cepat habis keluar (<= 3 hari)
+    var bigMin = Math.max(5000000, out.totK * 0.15);
+    all.forEach(function (x) {
+      if (!(x.t.kredit >= bigMin)) return;
+      var outflow = 0;
+      all.forEach(function (y) { if (y.t.debet && y.ord >= x.ord && y.ord <= x.ord + 3 && y.s === x.s) outflow += y.t.debet; });
+      if (outflow >= x.t.kredit * 0.7) out.passThrough.push({ day: x.t.day, mon: x.t.mon, v: x.t.kredit, out: outflow, desc: x.t.desc || '' });
+    });
+    // ringkasan pinjaman
+    var L = {}, rec = {};
+    function lend(n) { return L[n] || (L[n] = { name: n, cair: 0, cairN: 0, ang: 0, angN: 0 }); }
+    all.forEach(function (x) {
+      var t = x.t;
+      if (x.cat === 'pencairan' && t.kredit) { var a = lend(lenderOf(t.desc || '')); a.cair += t.kredit; a.cairN++; }
+      else if (x.cat === 'angsuran' && t.debet) {
+        var n = lenderOf(t.desc || ''), b = lend(n); b.ang += t.debet; b.angN++;
+        var key = n + '|' + t.debet; var r = rec[key] || (rec[key] = { name: n, v: t.debet, months: {}, n: 0 });
+        r.months[x.s.year * 100 + x.s.month] = 1; r.n++;
+      }
+    });
+    var lenders = Object.keys(L).map(function (k) { return L[k]; }).sort(function (a, b) { return (b.cair + b.ang) - (a.cair + a.ang); });
+    var recurring = Object.keys(rec).map(function (k) { var r = rec[k]; r.nMonths = Object.keys(r.months).length; return r; })
+      .filter(function (r) { return r.nMonths >= 2 && r.v >= 50000; }).sort(function (a, b) { return b.v - a.v; });
+    out.loan = { cair: out.kredit.pencairan.total, cairN: out.kredit.pencairan.n, ang: out.debit.angsuran.total, angN: out.debit.angsuran.n,
+      lenders: lenders, recurring: recurring, net: out.kredit.pencairan.total - out.debit.angsuran.total };
+    var kp = out.debit.konsumtif.total, pr = out.debit.produktif.total, cls = kp + pr;
+    out.share = {}; ['konsumtif', 'produktif', 'tarikTunai', 'angsuran'].forEach(function (c) { out.share[c] = out.totD ? out.debit[c].total / out.totD : 0; });
+    out.clearShare = out.totD ? cls / out.totD : 0;
+    var verdict;
+    if (out.clearShare < 0.2) verdict = { code: 'unclear', text: 'Belum bisa disimpulkan: sebagian besar pengeluaran tidak punya keterangan yang jelas.' };
+    else if (kp >= pr * 1.5) verdict = { code: 'konsumtif', text: 'Cenderung konsumtif' };
+    else if (pr >= kp * 1.5) verdict = { code: 'produktif', text: 'Cenderung produktif' };
+    else verdict = { code: 'seimbang', text: 'Seimbang antara konsumtif dan produktif' };
+    out.verdict = verdict;
+    return out;
+  }
+
   /* ---------------- deteksi & pemeriksaan ---------------- */
-  var BANKS = { BRI: parseBriPages, MANDIRI: parseMandiriPages, BCA: parseBcaPages, BSI: parseBsiPages, BJB: parseBjbPages, KOPRA: parseKopraPages, MANDIRI_KONSOL: parseConsPages };
+  var BANKS = { BRI: parseBriPages, MANDIRI: parseMandiriPages, BCA: parseBcaPages, BSI: parseBsiPages, BJB: parseBjbPages, KOPRA: parseKopraPages, MANDIRI_KONSOL: parseConsPages, SEABANK: parseSeaPages };
   function detectBank(pages) {
     for (var pi = 0; pi < pages.length; pi++) {
       var t = pageText(groupLines(pages[pi]));
+      if (/RINGKASAN REKENING/.test(t) && /SEABANK/.test(t)) return 'SEABANK';
       if (/Periode Transaksi/.test(t) && /LAPORAN TRANSAKSI FINANSIAL|Laporan Transaksi Finansial/i.test(t)) return 'BRI';
       if (/Initial Balance/.test(t) && /Account Number/.test(t)) return 'MANDIRI';
       if (/LAPORAN REKENING/.test(t) && /Detail Transaksi/.test(t) && /No Reff/.test(t)) return 'BSI';
@@ -616,9 +819,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     if (!bank) return [];
     var stmts = BANKS[bank](pages, onProgress);
     stmts.forEach(finishStatement);
+    attachDescs(stmts, pages);
     return stmts.filter(function (s) { return s.month && s.year; });
   }
-  function parseBri(pages, onProgress) { var s = parseBriPages(pages, onProgress); s.forEach(finishStatement); return s; }
+  function parseBri(pages, onProgress) { var s = parseBriPages(pages, onProgress); s.forEach(finishStatement); attachDescs(s, pages); return s; }
 
   function finishStatement(s) {
     s.bulan = BULAN[s.month - 1] || '';
@@ -853,7 +1057,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
              lastRow: lastRow, blocks: blocks };
   }
 
-  var api = { isImageOnly: isImageOnly, parseBri: parseBri, parseStatements: parseStatements, detectBank: detectBank, buildWorkbook: buildWorkbook, BULAN: BULAN };
+  var api = { analyze: analyze, isImageOnly: isImageOnly, parseBri: parseBri, parseStatements: parseStatements, detectBank: detectBank, buildWorkbook: buildWorkbook, BULAN: BULAN };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.RekapCore = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -1168,7 +1372,7 @@ async function handleFiles(fileList) {
   }
   if (!all.length) {
     showError('<b>Rekening koran tidak terbaca.</b><ul>' + failed.map((x) => '<li>' + esc(x) + '</li>').join('') +
-      '</ul>Aplikasi ini mendukung e-statement PDF dari BRI, Mandiri (Livin\', Kopra, dan Rekening Koran konsolidasi), BCA, BSI, dan BJB. Pastikan file berasal dari aplikasi atau internet banking, bukan hasil foto atau scan. Untuk bank lain, kirim contoh PDF-nya supaya format bisa ditambahkan.');
+      '</ul>Aplikasi ini mendukung e-statement PDF dari BRI, Mandiri (Livin\', Kopra, dan Rekening Koran konsolidasi), BCA, BSI, BJB, dan SeaBank. Pastikan file berasal dari aplikasi atau internet banking, bukan hasil foto atau scan. Untuk bank lain, kirim contoh PDF-nya supaya format bisa ditambahkan.');
     return;
   }
   if (failed.length) showError('<b>Sebagian file dilewati:</b><ul>' + failed.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>');
@@ -1213,6 +1417,51 @@ function pickStatements() {
   return { list, warns };
 }
 
+
+const rp = (n) => 'Rp' + Math.round(n).toLocaleString('id-ID');
+const MON_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+function renderAnalysis(list) {
+  const box = $('analysis');
+  let A;
+  try { A = RekapCore.analyze(list); } catch (e) { show(box, false); return; }
+  if (!A.totD && !A.totK) { show(box, false); return; }
+  const pct = (v, t) => (t ? Math.round((v / t) * 100) : 0);
+  const grp = (obj, total, cls) => Object.values(obj).filter((g) => g.n).sort((x, y) => y.total - x.total).map((g) => {
+    const top = g.items.slice(0, g.cat === 'lain' ? 8 : 5);
+    return '<details class="' + cls + '"><summary><span>' + esc(g.label) + ' · ' + fmtInt(g.n) + ' transaksi</span><span class="amt">' + rp(g.total) + ' (' + pct(g.total, total) + '%)</span>' +
+      '<span class="bar"><i style="width:' + Math.max(2, pct(g.total, total)) + '%"></i></span></summary><ul class="items">' +
+      top.map((i) => '<li><span>' + i.day + ' ' + MON_ID[i.mon - 1] + ' · ' + esc(i.desc || '(tanpa keterangan)') + '</span><span class="amt">' + rp(i.v) + '</span></li>').join('') +
+      '</ul></details>';
+  }).join('');
+  const v = A.verdict;
+  const agenShare = (A.totD + A.totK) ? (A.debit.agen.total + A.kredit.agen.total) / (A.totD + A.totK) : 0;
+  let h = '<h3>Analisa rekening (perkiraan otomatis)</h3>' +
+    '<div class="verdict ' + (v.code === 'unclear' ? 'unclear' : '') + '"><b>' + esc(v.text) + '</b>' +
+    '<small>Konsumtif ' + pct(A.debit.konsumtif.total, A.totD) + '% · Produktif ' + pct(A.debit.produktif.total, A.totD) + '% · Tarik tunai ' + pct(A.debit.tarikTunai.total, A.totD) +
+    '% · Angsuran ' + pct(A.debit.angsuran.total, A.totD) + '% dari total debet. Yang bisa dikenali dari keterangan: ' + Math.round(A.clearShare * 100) + '% dari total debet.</small></div>';
+  const LN = A.loan;
+  if (LN.cairN || LN.angN) {
+    h += '<div class="loanbox"><h3>Pinjaman</h3>' +
+      '<div class="lsum"><div><small>Pencairan masuk</small><b>' + rp(LN.cair) + '</b><small>' + LN.cairN + ' transaksi · ' + pct(LN.cair, A.totK) + '% dari total kredit</small></div>' +
+      '<div><small>Angsuran/pelunasan keluar</small><b>' + rp(LN.ang) + '</b><small>' + LN.angN + ' transaksi · ' + pct(LN.ang, A.totD) + '% dari total debet</small></div>' +
+      '<div><small>Selisih (cair − angsuran)</small><b>' + (LN.net < 0 ? '−' : '') + rp(Math.abs(LN.net)) + '</b><small>' + (LN.net >= 0 ? 'lebih banyak cair' : 'lebih banyak bayar') + '</small></div></div>';
+    h += '<div class="grp"><span class="gt">Per pemberi pinjaman</span>' + LN.lenders.map((x) =>
+      '<div class="lrow"><span>' + esc(x.name) + '</span><span class="amt">cair ' + rp(x.cair) + ' (' + x.cairN + 'x) · bayar ' + rp(x.ang) + ' (' + x.angN + 'x)</span></div>').join('') + '</div>';
+    if (LN.recurring.length) h += '<div class="grp"><span class="gt">Angsuran berulang (nominal sama, ≥2 bulan)</span>' + LN.recurring.slice(0, 6).map((r) =>
+      '<div class="lrow"><span>' + esc(r.name) + '</span><span class="amt">' + rp(r.v) + ' · ' + r.n + 'x di ' + r.nMonths + ' bulan</span></div>').join('') + '</div>';
+    if (LN.cairN) h += '<details class="g-k"><summary><span>Daftar pencairan terbesar</span><span class="amt">' + rp(LN.cair) + '</span></summary><ul class="items">' +
+      A.kredit.pencairan.items.slice(0, 8).map((i) => '<li><span>' + i.day + ' ' + MON_ID[i.mon - 1] + ' · ' + esc(i.desc || '(tanpa keterangan)') + '</span><span class="amt">' + rp(i.v) + '</span></li>').join('') + '</ul></details>';
+    h += '<div class="hint2">Pemberi pinjaman dikenali dari kata kunci pada keterangan, jadi bisa meleset. Pencairan dan angsuran yang keterangannya tidak memuat kata pinjaman tidak ikut terhitung. Kartu kredit dihitung sebagai angsuran.</div></div>';
+  } else h += '<div class="hint2">Tidak ada transaksi yang keterangannya terbaca sebagai pinjaman (pencairan maupun angsuran).</div>';
+  if (A.passThrough.length) h += '<div class="alert"><b>Kredit besar yang hampir habis keluar dalam 3 hari (' + A.passThrough.length + ')</b><span>' +
+    A.passThrough.slice(0, 4).map((i) => i.day + ' ' + MON_ID[i.mon - 1] + ' masuk ' + rp(i.v) + ', keluar ' + rp(i.out) + ' · ' + esc(i.desc.slice(0, 60))).join('<br>') + '</span></div>';
+  if (agenShare >= 0.3) h += '<div class="hint2">Banyak transaksi bertanda agen pembayaran (BRILink dan sejenisnya, ' + Math.round(agenShare * 100) + '% dari seluruh nilai transaksi). Rekening ini kemungkinan dipakai sebagai rekening agen, jadi pola konsumtif atau produktifnya kurang mewakili pribadi.</div>';
+  h += '<div class="grp g-d"><span class="gt">Debet · ' + rp(A.totD) + '</span>' + grp(A.debit, A.totD, 'g-d') + '</div>';
+  h += '<div class="grp g-k"><span class="gt">Kredit · ' + rp(A.totK) + '</span>' + grp(A.kredit, A.totK, 'g-k') + '</div>';
+  h += '<div class="hint2">Penggolongan memakai kata kunci pada keterangan transaksi, jadi hanya perkiraan. Transfer antar orang biasanya tidak bisa dipastikan tujuannya dan masuk “tidak jelas” atau “belum terklasifikasi”. Buka tiap baris untuk melihat transaksi terbesarnya, dan nilai sendiri sebelum dipakai sebagai dasar keputusan.</div>';
+  box.innerHTML = h; show(box, true);
+}
+
 function renderResult() {
   const sel = $('acct-select');
   if (S.accounts.length > 1) {
@@ -1222,6 +1471,7 @@ function renderResult() {
 
   const { list, warns } = pickStatements();
   S.used = list;
+  renderAnalysis(list);
   $('notices').innerHTML = warns.map((w) => '<div class="notice warn"><b>Perlu diperhatikan</b><span>' + w + '</span></div>').join('');
 
   $('months').innerHTML = list.map((s) => {
