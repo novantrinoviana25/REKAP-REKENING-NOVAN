@@ -166,6 +166,9 @@ table.prev th { color: var(--muted); font-weight: 500; }
 .an .items li span:first-child { overflow-wrap: anywhere; }
 .an .items li .amt { font-family: var(--font-num); color: var(--ink); white-space: nowrap; }
 
+.chks { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 10px; }
+.chk { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; line-height: 1.4; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); cursor: pointer; }
+.chk input { margin-top: 3px; width: 18px; height: 18px; flex: none; }
 .notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 13px; }
 .notes b { color: var(--ink); font-weight: 500; }
 </style>
@@ -210,7 +213,9 @@ table.prev th { color: var(--muted); font-weight: 500; }
       <header><h2 id="h-result">2. Hasil bacaan</h2><button class="link" type="button" id="reset">Ganti file</button></header>
       <div id="notices" style="display:flex;flex-direction:column;gap:10px"></div>
       <div class="field" id="acct-pick" hidden>
-        <label for="acct-select">PDF berisi lebih dari satu rekening. Pilih yang dipakai:</label>
+        <label>PDF berisi lebih dari satu rekening. Centang yang dimasukkan ke Excel (semua jadi satu file, tiap rekening satu lembar, ditambah lembar Total Gabungan):</label>
+        <div id="acct-checks" class="chks"></div>
+        <label for="acct-select">Rekening yang rinciannya ditampilkan di bawah:</label>
         <select id="acct-select"></select>
       </div>
       <div class="months" id="months"></div>
@@ -1025,7 +1030,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return xml;
   }
 
-  async function buildWorkbook(JSZip, tplBytes, d) {
+  async function buildWorkbookSingle(JSZip, tplBytes, d) {
     var zip = await JSZip.loadAsync(tplBytes);
     var maxN = 0;
     d.months.forEach(function (m) { if (m.txs.length > maxN) maxN = m.txs.length; });
@@ -1040,7 +1045,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     var s2 = await zip.file('xl/worksheets/sheet2.xml').async('string');
     var s3 = await zip.file('xl/worksheets/sheet3.xml').async('string');
     zip.file('xl/worksheets/sheet2.xml', buildSheet2(s2, d, blocks, lastRow, delta));
-    zip.file('xl/worksheets/sheet3.xml', buildSheet3(s3, d, blocks, delta));
+    zip.file('xl/worksheets/sheet3.xml', fixResume(buildSheet3(s3, d, blocks, delta), [{ d: d, blocks: blocks }]));
 
     var wb = await zip.file('xl/workbook.xml').async('string');
     wb = wb.replace(/<calcPr[^>]*\/>/, '<calcPr calcId="162913" fullCalcOnLoad="1"/>')
@@ -1055,6 +1060,241 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     zip.file('xl/_rels/workbook.xml.rels', rl.replace(/<Relationship Id="[^"]*" Type="[^"]*calcChain" Target="calcChain.xml"\/>/, ''));
     return { bytes: await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } }),
              lastRow: lastRow, blocks: blocks };
+  }
+
+  /* ---------------- beberapa rekening dalam satu file ---------------- */
+  function unesc(s) { return String(s).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&'); }
+  function colRow(ref) { var m = /^([A-Z]+)(\d+)$/.exec(ref); return [m[1], +m[2]]; }
+  function statOf(b, k) { return [b.sumD, b.sumK, b.max, b.min, b.avg, b.mengendap, b.closing, b.cD, b.cK, b.days, 0, 0, 0][k]; }
+  function divv(a, b) { return b === 0 ? '#DIV/0!' : (a - b) / b; }
+  var RR = "'Rekap Rekening'!";
+
+  /* blok rekening ke-i (i >= 1) di lembar Rekap: salin rumus blok pertama, arahkan ke lembar rekening itu */
+  function fillRekapBlock(xml, raw, i, sheetName, inf) {
+    var off = 23 * i, d = inf.d, bl = inf.blocks, m = d.months;
+    var cells = [];
+    raw.forEach(function (c) {
+      var cr = colRow(c.ref), row = cr[1] + off;
+      var f = c.f.replace(/('Aktivitas Saldo'!)(\$?[A-Z]+\$?)(\d+)|([(,+\-*\/&]|^)(\$?[A-Z]{1,2}\$?)(\d+)/g, function (x, a, b2, c2, e, f2, g) {
+        if (a) return "'" + sheetName + "'!" + b2 + (+c2 >= 1071 ? +c2 + inf.delta : +c2);
+        return e + f2 + (+g + off);
+      });
+      var val, isStr = false, isErr = false, r0 = cr[1];
+      if (r0 === 5) { val = d.bank; isStr = true; }
+      else if (r0 === 6 || r0 === 7) { val = d.accountName; isStr = true; }
+      else if (r0 === 8) { val = d.accountNo; isStr = true; }
+      else if (r0 === 10) { var mi = cr[0] === 'C' ? 0 : cr[0] === 'D' ? 1 : 2; val = m[mi] ? m[mi].bulan : '0'; isStr = !!m[mi]; }
+      else {
+        var k = r0 - 12, C = statOf(bl[0], k), D = statOf(bl[1], k), F = statOf(bl[2], k);
+        val = cr[0] === 'C' ? C : cr[0] === 'D' ? D : cr[0] === 'F' ? F : cr[0] === 'E' ? divv(D, C) : cr[0] === 'G' ? divv(F, D) : (F + D + C) / 3;
+        if (val === '#DIV/0!') isErr = true;
+      }
+      cells.push({ ref: cr[0] + row, s: c.s, f: f, val: val, isStr: isStr, isErr: isErr });
+    });
+    cells.forEach(function (c) {
+      var re = new RegExp('<c r="' + c.ref + '"[^>]*?(?:/>|>.*?</c>)', 's');
+      var t = c.isStr ? ' t="str"' : c.isErr ? ' t="e"' : '';
+      var nx = '<c r="' + c.ref + '" s="' + c.s + '"' + t + '><f>' + esc(c.f) + '</f><v>' + (c.isStr ? esc(c.val) : c.val) + '</v></c>';
+      xml = xml.replace(re, function () { return nx; });
+    });
+    /* sel growth/rata-rata di blok ini memakai rumus bawaan template (shared formula): perbarui nilai cache-nya saja */
+    function setCell(ref, f, val) {
+      var re = new RegExp('<c r="' + ref + '"([^>]*?)(?:/>|>.*?</c>)', 's');
+      xml = xml.replace(re, function (m, attrs) {
+        var st = (/\ss="(\d+)"/.exec(attrs) || [0, 0])[1];
+        return '<c r="' + ref + '" s="' + st + '"' + (val === '#DIV/0!' ? ' t="e"' : '') + '><f>' + f + '</f><v>' + val + '</v></c>';
+      });
+    }
+    for (var kk = 0; kk < 13; kk++) {
+      var rr = 12 + kk + off, C2 = statOf(bl[0], kk), D2 = statOf(bl[1], kk), F2 = statOf(bl[2], kk);
+      setCell('E' + rr, '(D' + rr + '-C' + rr + ')/C' + rr, divv(D2, C2));
+      setCell('G' + rr, '(F' + rr + '-D' + rr + ')/D' + rr, divv(F2, D2));
+      setCell('H' + rr, 'AVERAGE(F' + rr + ',D' + rr + ',C' + rr + ')', (F2 + D2 + C2) / 3);
+    }
+    return xml;
+  }
+
+  function rawBlock1(s3raw) {
+    var out = [], re = /<c r="([C-H])(\d+)"([^>]*?)>(<f>.*?<\/f>)<v>.*?<\/v><\/c>/gs, m;
+    var seg = s3raw.slice(s3raw.indexOf('<row r="5"'), s3raw.indexOf('<row r="25"'));
+    while ((m = re.exec(seg))) {
+      var r = +m[2];
+      if (!((r >= 5 && r <= 8 && m[1] === 'C') || (r === 10 && 'CDF'.indexOf(m[1]) >= 0) || (r >= 12 && r <= 24))) continue;
+      var s = (/\ss="(\d+)"/.exec(m[3]) || [0, 0])[1];
+      out.push({ ref: m[1] + m[2], s: s, f: unesc(m[4].replace(/^<f>/, '').replace(/<\/f>$/, '')) });
+    }
+    return out;
+  }
+
+  /* ringkasan (resume) di bagian bawah Rekap: jumlahkan semua rekening, bukan hanya 3 blok bawaan template */
+  function fixResume(xml, infos) {
+    var N = infos.length;
+    function setF(ref, f, val, isStr, isErr) {
+      var re = new RegExp('(<c r="' + ref + '"[^>]*?)(?:\\s+t="[^"]*")?([^>]*?)(?:/>|>.*?</c>)', 's');
+      xml = xml.replace(re, function (m, a, b) {
+        var s = (/\ss="(\d+)"/.exec(m) || [0, 34])[1];
+        var t = isStr ? ' t="str"' : isErr ? ' t="e"' : '';
+        return '<c r="' + ref + '" s="' + s + '"' + t + '><f>' + esc(f) + '</f><v>' + (isStr ? esc(val) : val) + '</v></c>';
+      });
+    }
+    function setV(ref, val, isErr) {
+      var re = new RegExp('(<c r="' + ref + '")([^>]*?)>(<f[^>]*?(?:/>|>.*?</f>))<v>.*?</v></c>', 's');
+      xml = xml.replace(re, function (m, a, attrs, f) {
+        attrs = attrs.replace(/\s+t="[^"]*"/, '');
+        return a + attrs + (isErr ? ' t="e"' : '') + '>' + f + '<v>' + val + '</v></c>';
+      });
+    }
+    var sumNames = function (cell0, key) { return infos.map(function (x) { return x.d[key]; }).join(' & '); };
+    var refs = function (col, row) { var a = []; for (var i = 0; i < N; i++) a.push(col + (row + 23 * i)); return a; };
+    setF('C120', '+' + refs('C', 5).join('&" & "&'), sumNames(0, 'bank'), true);
+    setF('C122', '+' + refs('C', 7).join('&" & "&'), sumNames(0, 'accountName'), true);
+    setF('C123', '+' + refs('C', 8).join('&" & "&'), sumNames(0, 'accountNo'), true);
+    for (var k = 0; k < 13; k++) {
+      var row = 127 + k, vals = {};
+      ['C', 'D', 'F'].forEach(function (col, ci) {
+        if (k === 9) { vals[col] = statOf(infos[0].blocks[ci], 9); return; }   // jumlah hari: ikut rekening pertama (seperti template)
+        var f = '+' + refs(col, 12 + k).join('+'), sum = 0;
+        infos.forEach(function (x) { sum += statOf(x.blocks[ci], k); });
+        vals[col] = sum;
+        setF(col + row, f, r2(sum), false, false);
+      });
+      var e = divv(vals.D, vals.C), g = divv(vals.F, vals.D);
+      setV('E' + row, e, e === '#DIV/0!'); setV('G' + row, g, g === '#DIV/0!'); setV('H' + row, (vals.C + vals.D + vals.F) / 3);
+    }
+    return xml;
+  }
+
+  /* lembar "Total Gabungan" */
+  function buildTotalSheet(infos) {
+    var N = infos.length, rows = [], r = 0;
+    var m = infos[0].d.months;
+    function C(ref, s, o) {
+      o = o || {};
+      if (o.f != null) {
+        var t = o.str ? ' t="str"' : o.err ? ' t="e"' : '';
+        return '<c r="' + ref + '" s="' + s + '"' + t + '><f>' + esc(o.f) + '</f><v>' + (o.str ? esc(o.v) : o.v) + '</v></c>';
+      }
+      return istr(ref, s, o.text);
+    }
+    function row(n, cells, extra) { rows.push('<row r="' + n + '"' + (extra || '') + '>' + cells.join('') + '</row>'); }
+    row(1, [C('B1', 26, { text: 'Total Gabungan Rekening Koran' })]);
+    row(2, [C('B2', 29, { text: 'Nama Konsumen :' }), C('C2', 29, { f: RR + 'C6', v: infos[0].d.konsumen || infos[0].d.accountName, str: true })]);
+    row(4, [C('B4', 29, { text: 'REKENING YANG DIGABUNGKAN' })]);
+    infos.forEach(function (x, i) {
+      var b = 5 + 23 * i, ref = 5 + i;
+      row(ref, [C('B' + ref, 33, { text: 'Rekening ' + (i + 1) }),
+        C('C' + ref, 29, { f: RR + 'C' + b + '&" · "&' + RR + 'C' + (b + 3) + '&" · "&' + RR + 'C' + (b + 2), v: x.d.bank + ' · ' + x.d.accountNo + ' · ' + x.d.accountName, str: true })]);
+    });
+    var T = 5 + N + 1;
+    function bulan(i) { return m[i] ? m[i].bulan : '0'; }
+    row(T, [C('B' + T, 72, { text: 'Periode' }),
+      C('C' + T, 32, { f: RR + 'C10', v: bulan(0), str: true }), C('D' + T, 32, { f: RR + 'D10', v: bulan(1), str: true }), C('E' + T, 32, { text: 'GROWTH' }),
+      C('F' + T, 32, { f: RR + 'F10', v: bulan(2), str: true }), C('G' + T, 32, { text: 'GROWTH' }), C('H' + T, 32, { text: 'Rata rata' })]);
+    row(T + 1, [C('C' + (T + 1), 32, { text: '(a)' }), C('D' + (T + 1), 32, { text: '(b)' }), C('E' + (T + 1), 32, { text: 'a > b' }), C('F' + (T + 1), 32, { text: '(c)' }), C('G' + (T + 1), 32, { text: 'b > c' })]);
+    var LABEL = ['Mutasi Debet', 'Mutasi Kredit', 'Saldo Tertinggi', 'Saldo Terendah', 'Saldo Rata-rata', 'Saldo Mengendap', 'Saldo Akhir', 'Frek. Debet', 'Frek. Kredit', 'Jlh Hari Aktivitas', 'Tolakan Masuk', 'Tolakan Keluar', 'Kelonggaran Tarik'];
+    function metricRow(n, label, k, accIdx, first) {
+      var vals = {}, cells = {};
+      ['C', 'D', 'F'].forEach(function (col, ci) {
+        var f, sum = 0;
+        if (first) { f = RR + col + (12 + k); sum = statOf(infos[0].blocks[ci], k); }
+        else { f = '+' + accIdx.map(function (i) { return RR + col + (12 + k + 23 * i); }).join('+'); accIdx.forEach(function (i) { sum += statOf(infos[i].blocks[ci], k); }); }
+        vals[col] = r2(sum); cells[col] = C(col + n, k === 7 || k === 8 || k === 9 ? 37 : 34, { f: f, v: r2(sum) });
+      });
+      var e = divv(vals.D, vals.C), g = divv(vals.F, vals.D);
+      return [C('B' + n, 33, { text: label }), cells.C, cells.D, C('E' + n, 35, { f: '(D' + n + '-C' + n + ')/C' + n, v: e, err: e === '#DIV/0!' }), cells.F,
+        C('G' + n, 35, { f: '(F' + n + '-D' + n + ')/D' + n, v: g, err: g === '#DIV/0!' }), C('H' + n, 36, { f: 'AVERAGE(F' + n + ',D' + n + ',C' + n + ')', v: (vals.C + vals.D + vals.F) / 3 })];
+    }
+    var ALL = infos.map(function (x, i) { return i; });
+    for (var k = 0; k < 13; k++) {
+      row(T + 2 + k, metricRow(T + 2 + k, LABEL[k], k, ALL, k === 9));
+    }
+    var n = T + 2 + 13 + 1;
+    row(n, [C('B' + n, 29, { text: 'RINCIAN PER REKENING' })]); n++;
+    [0, 1, 6, 4].forEach(function (k) {
+      row(n, [C('B' + n, 72, { text: LABEL[k] })]); n++;
+      infos.forEach(function (x, i) {
+        row(n, metricRow(n, 'Rekening ' + (i + 1), k, [i], false)); n++;
+      });
+    });
+    var lastR = n;
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+      '<dimension ref="A1:I' + lastR + '"/><sheetViews><sheetView zoomScale="85" zoomScaleNormal="85" workbookViewId="0"/></sheetViews><sheetFormatPr defaultColWidth="9.140625" defaultRowHeight="15"/>' +
+      '<cols><col min="1" max="1" width="2.7109375" style="23" customWidth="1"/><col min="2" max="2" width="22" style="23" customWidth="1"/><col min="3" max="4" width="16.5" style="23" customWidth="1"/><col min="5" max="5" width="14.4" style="28" customWidth="1"/><col min="6" max="6" width="16.5" style="23" customWidth="1"/><col min="7" max="7" width="11.1" style="28" customWidth="1"/><col min="8" max="8" width="16.5" style="23" customWidth="1"/><col min="9" max="16384" width="9.14" style="23"/></cols>' +
+      '<sheetData>' + rows.join('') + '</sheetData><pageMargins left="0.25" right="0.25" top="0.49" bottom="0.56" header="0.3" footer="0.3"/></worksheet>';
+  }
+
+  async function buildWorkbookMulti(JSZip, tplBytes, d) {
+    var accts = d.accounts, N = accts.length;
+    var zip = await JSZip.loadAsync(tplBytes);
+    var s2raw = await zip.file('xl/worksheets/sheet2.xml').async('string');
+    var s3raw = await zip.file('xl/worksheets/sheet3.xml').async('string');
+    var infos = accts.map(function (a) {
+      var da = { bank: a.bank, accountName: a.accountName, accountNo: a.accountNo, konsumen: d.konsumen, months: a.months };
+      var maxN = 0; da.months.forEach(function (m) { if (m.txs.length > maxN) maxN = m.txs.length; });
+      var lastRow = 9 + Math.max(BASE_CAP, maxN), delta = lastRow - 1070;
+      var blocks = [], carry = da.months[0].opening;
+      for (var bi = 0; bi < 3; bi++) {
+        var m = da.months[bi], txs = m ? m.txs : [], days = m ? m.days : 31;
+        var b = calcBlock(carry, txs, lastRow, days); blocks.push(b); carry = b.closing;
+      }
+      return { d: da, blocks: blocks, lastRow: lastRow, delta: delta };
+    });
+    var names = infos.map(function (x, i) { return i === 0 ? 'Aktivitas Saldo' : 'Aktivitas Saldo ' + (i + 1); });
+    // lembar aktivitas saldo per rekening
+    infos.forEach(function (x, i) {
+      var xml = buildSheet2(s2raw, x.d, x.blocks, x.lastRow, x.delta);
+      if (i > 0) { xml = xml.replace(/\s+tabSelected="1"/, ''); zip.file('xl/worksheets/sheet' + (3 + i) + '.xml', xml); }
+      else zip.file('xl/worksheets/sheet2.xml', xml);
+    });
+    // lembar rekap: blok 1 seperti biasa, blok 2..N disalin
+    var raw = rawBlock1(s3raw);
+    var s3 = buildSheet3(s3raw, infos[0].d, infos[0].blocks, infos[0].delta);
+    for (var i = 1; i < N; i++) s3 = fillRekapBlock(s3, raw, i, names[i], infos[i]);
+    s3 = fixResume(s3, infos);
+    zip.file('xl/worksheets/sheet3.xml', s3);
+    var totalFile = 'xl/worksheets/sheet' + (3 + N) + '.xml';
+    zip.file(totalFile, buildTotalSheet(infos));
+
+    var wb = await zip.file('xl/workbook.xml').async('string');
+    var sheetsXml = '<sheets><sheet name="Parameter" sheetId="2" state="hidden" r:id="rId1"/><sheet name="Aktivitas Saldo" sheetId="7" r:id="rId2"/>';
+    for (var k = 1; k < N; k++) sheetsXml += '<sheet name="' + names[k] + '" sheetId="' + (20 + k) + '" r:id="rId' + (100 + k) + '"/>';
+    sheetsXml += '<sheet name="Rekap Rekening" sheetId="6" r:id="rId3"/><sheet name="Total Gabungan" sheetId="30" r:id="rId120"/></sheets>';
+    wb = wb.replace(/<sheets>.*?<\/sheets>/s, sheetsXml);
+    var fd = '';
+    infos.forEach(function (x, k) { fd += '<definedName name="_xlnm._FilterDatabase" localSheetId="' + (1 + k) + '" hidden="1">\'' + names[k] + '\'!$A$8:$Y$' + x.lastRow + '</definedName>'; });
+    wb = wb.replace(/<definedName name="_xlnm\._FilterDatabase"[^>]*>[^<]*<\/definedName>/, fd)
+      .replace(/(<definedName name="_xlnm\.Print_Area" localSheetId=")2(")/, '$1' + (1 + N) + '$2')
+      .replace(/<calcPr[^>]*\/>/, '<calcPr calcId="162913" fullCalcOnLoad="1"/>')
+      .replace(/<mc:AlternateContent[^>]*>.*?<\/mc:AlternateContent>/s, '');
+    zip.file('xl/workbook.xml', wb);
+    var rl = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    var add = '';
+    for (var q = 1; q < N; q++) add += '<Relationship Id="rId' + (100 + q) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (3 + q) + '.xml"/>';
+    add += '<Relationship Id="rId120" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (3 + N) + '.xml"/>';
+    rl = rl.replace(/<Relationship Id="[^"]*" Type="[^"]*calcChain" Target="calcChain.xml"\/>/, '').replace('</Relationships>', add + '</Relationships>');
+    zip.file('xl/_rels/workbook.xml.rels', rl);
+    var ct = await zip.file('[Content_Types].xml').async('string');
+    var ov = '';
+    for (var q2 = 1; q2 < N; q2++) ov += '<Override PartName="/xl/worksheets/sheet' + (3 + q2) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+    ov += '<Override PartName="/' + totalFile + '" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+    ct = ct.replace(/<Override PartName="\/xl\/calcChain.xml"[^>]*\/>/, '').replace('</Types>', ov + '</Types>');
+    zip.file('[Content_Types].xml', ct);
+    zip.remove('xl/calcChain.xml');
+    var ap = zip.file('docProps/app.xml');
+    if (ap) {
+      var ax = await ap.async('string');
+      var titles = '<vt:lpstr>Parameter</vt:lpstr>' + names.map(function (nm) { return '<vt:lpstr>' + nm + '</vt:lpstr>'; }).join('') + '<vt:lpstr>Rekap Rekening</vt:lpstr><vt:lpstr>Total Gabungan</vt:lpstr><vt:lpstr>\'Rekap Rekening\'!Print_Area</vt:lpstr>';
+      ax = ax.replace('<vt:i4>3</vt:i4>', '<vt:i4>' + (N + 3) + '</vt:i4>').replace(/<TitlesOfParts>.*?<\/TitlesOfParts>/s, '<TitlesOfParts><vt:vector size="' + (N + 4) + '" baseType="lpstr">' + titles + '</vt:vector></TitlesOfParts>');
+      zip.file('docProps/app.xml', ax);
+    }
+    return { bytes: await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } }),
+             lastRow: infos[0].lastRow, blocks: infos[0].blocks, accounts: N };
+  }
+
+  function buildWorkbook(JSZip, tplBytes, d) {
+    if (d.accounts && d.accounts.length > 1) return buildWorkbookMulti(JSZip, tplBytes, d);
+    if (d.accounts && d.accounts.length === 1) { var a = d.accounts[0]; d = { bank: a.bank, accountName: a.accountName, accountNo: a.accountNo, konsumen: d.konsumen, months: a.months }; }
+    return buildWorkbookSingle(JSZip, tplBytes, d);
   }
 
   var api = { analyze: analyze, isImageOnly: isImageOnly, parseBri: parseBri, parseStatements: parseStatements, detectBank: detectBank, buildWorkbook: buildWorkbook, BULAN: BULAN };
@@ -1272,6 +1512,7 @@ const fmt = (n) => n.toLocaleString('id-ID', { minimumFractionDigits: 2, maximum
 const fmtInt = (n) => n.toLocaleString('id-ID');
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
+const MAX_ACCTS = 5;
 const S = { stmts: [], accounts: [], account: null, used: [], busy: false };
 let pdfWorker = null;
 
@@ -1379,7 +1620,7 @@ async function handleFiles(fileList) {
   S.stmts = all; S.totalPages = totalPages;
   const accts = [];
   all.forEach((s) => { if (!accts.includes(s.accountNo)) accts.push(s.accountNo); });
-  S.accounts = accts; S.account = accts[0];
+  S.accounts = accts; S.account = accts[0]; S.picked = accts.slice(0, MAX_ACCTS);
   S.acctInfo = {};
   all.forEach((s) => { if (!S.acctInfo[s.accountNo]) S.acctInfo[s.accountNo] = { bank: s.bank, name: s.name }; });
   renderResult();
@@ -1392,9 +1633,9 @@ async function handleFiles(fileList) {
 
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
-function pickStatements() {
+function pickStatements(acct) {
   const warns = [];
-  let list = S.stmts.filter((s) => s.accountNo === S.account);
+  let list = S.stmts.filter((s) => s.accountNo === (acct || S.account));
   list.sort((a, b) => (a.year - b.year) || (a.month - b.month));
   const seen = new Set(), uniq = [];
   list.forEach((s) => {
@@ -1435,7 +1676,7 @@ function renderAnalysis(list) {
   }).join('');
   const v = A.verdict;
   const agenShare = (A.totD + A.totK) ? (A.debit.agen.total + A.kredit.agen.total) / (A.totD + A.totK) : 0;
-  let h = '<h3>Analisa rekening (perkiraan otomatis)</h3>' +
+  let h = '<h3>Analisa rekening (perkiraan otomatis)' + (S.accounts.length > 1 ? ' · ' + esc((S.acctInfo[S.account].bank || '') + ' ' + S.account) : '') + '</h3>' +
     '<div class="verdict ' + (v.code === 'unclear' ? 'unclear' : '') + '"><b>' + esc(v.text) + '</b>' +
     '<small>Konsumtif ' + pct(A.debit.konsumtif.total, A.totD) + '% · Produktif ' + pct(A.debit.produktif.total, A.totD) + '% · Tarik tunai ' + pct(A.debit.tarikTunai.total, A.totD) +
     '% · Angsuran ' + pct(A.debit.angsuran.total, A.totD) + '% dari total debet. Yang bisa dikenali dari keterangan: ' + Math.round(A.clearShare * 100) + '% dari total debet.</small></div>';
@@ -1467,11 +1708,24 @@ function renderResult() {
   if (S.accounts.length > 1) {
     sel.innerHTML = S.accounts.map((a) => '<option value="' + esc(a) + '"' + (a === S.account ? ' selected' : '') + '>' + esc((S.acctInfo[a].bank || '') + ' · ' + a + ' · ' + (S.acctInfo[a].name || '')) + '</option>').join('');
     show($('acct-pick'), true);
+    const full = S.picked.length >= MAX_ACCTS;
+    $('acct-checks').innerHTML = S.accounts.map((a) => {
+      const on = S.picked.includes(a);
+      return '<label class="chk"><input type="checkbox" data-acct="' + esc(a) + '"' + (on ? ' checked' : '') + (!on && full ? ' disabled' : '') + '><span>' +
+        esc((S.acctInfo[a].bank || '') + ' · ' + a + ' · ' + (S.acctInfo[a].name || '')) + '</span></label>';
+    }).join('');
   } else show($('acct-pick'), false);
 
   const { list, warns } = pickStatements();
   S.used = list;
   renderAnalysis(list);
+  if (S.accounts.length > 1) {
+    if (S.picked.length > 1) {
+      const sig = S.picked.map((ac) => pickStatements(ac).list.map((s) => s.month + '/' + s.year).join(','));
+      if (new Set(sig).size > 1) warns.push('Bulan yang tersedia tidak sama antar rekening yang dipilih. Di lembar Total Gabungan, kolom (a), (b), (c) dijumlahkan menurut urutan bulan, bukan menurut nama bulan.');
+      if (S.picked.length >= MAX_ACCTS) warns.push('Template memuat paling banyak ' + MAX_ACCTS + ' rekening dalam satu file.');
+    } else if (!S.picked.length) warns.push('Centang minimal satu rekening untuk dimasukkan ke Excel.');
+  }
   $('notices').innerHTML = warns.map((w) => '<div class="notice warn"><b>Perlu diperhatikan</b><span>' + w + '</span></div>').join('');
 
   $('months').innerHTML = list.map((s) => {
@@ -1510,6 +1764,11 @@ function renderResult() {
   $('s-result').scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
+function fileNameMulti(picked) {
+  const base = ($('f-kons').value || ($('f-name').value || 'REKENING')).trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').toUpperCase().slice(0, 40) || 'REKENING';
+  return 'FORM_ANALISA_' + base + '_GABUNGAN_' + picked.length + '_REKENING.xlsx';
+}
+
 function fileName(list) {
   const nm = ($('f-name').value || 'REKENING').trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').toUpperCase().slice(0, 40) || 'REKENING';
   const bl = list.map((s) => s.bulan.slice(0, 3)).join('-');
@@ -1517,6 +1776,9 @@ function fileName(list) {
 }
 
 async function make() {
+  const multi = S.accounts.length > 1;
+  const picked = multi ? S.picked.slice() : [S.account];
+  if (multi && !picked.length) return;
   const list = S.used;
   if (!list.length) return;
   if (window.PayGate && PayGate.enabled()) {
@@ -1537,13 +1799,21 @@ async function make() {
   const st = $('status'); st.className = 'status'; st.textContent = 'Menyusun file Excel…';
   $('make').disabled = true;
   try {
-    const d = {
-      bank: $('f-bank').value.trim(), accountName: $('f-name').value.trim(), accountNo: $('f-no').value.trim(), konsumen: $('f-kons').value.trim(),
-      months: list.map((s) => ({ bulan: s.bulan, days: s.days, opening: s.opening, txs: s.txs }))
-    };
+    const mapMonths = (l) => l.map((s) => ({ bulan: s.bulan, days: s.days, opening: s.opening, txs: s.txs }));
+    let d;
+    if (multi) {
+      const accounts = picked.map((ac) => {
+        const l = pickStatements(ac).list, f = l[0];
+        const cur = ac === S.account;
+        return { bank: cur ? $('f-bank').value.trim() : (f.bank || ''), accountName: cur ? $('f-name').value.trim() : f.name, accountNo: cur ? $('f-no').value.trim() : f.accountNo, months: mapMonths(l) };
+      });
+      d = { konsumen: $('f-kons').value.trim(), accounts };
+    } else {
+      d = { bank: $('f-bank').value.trim(), accountName: $('f-name').value.trim(), accountNo: $('f-no').value.trim(), konsumen: $('f-kons').value.trim(), months: mapMonths(list) };
+    }
     await new Promise((r) => setTimeout(r, 30));
     const res = await RekapCore.buildWorkbook(JSZip, b64ToBytes(document.getElementById('tpl-b64').textContent.trim()), d);
-    const name = fileName(list);
+    const name = multi && picked.length > 1 ? fileNameMulti(picked) : fileName(list);
     const blob = new Blob([res.bytes], { type: XLSX_MIME });
     const dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null;
     if (dl) {
@@ -1571,6 +1841,14 @@ $('file').addEventListener('change', (e) => { const f = e.target.files; if (f &&
 ['dragenter', 'dragover'].forEach((ev) => $('drop').addEventListener(ev, (e) => { e.preventDefault(); $('drop').classList.add('over'); }));
 ['dragleave', 'drop'].forEach((ev) => $('drop').addEventListener(ev, (e) => { e.preventDefault(); $('drop').classList.remove('over'); }));
 $('drop').addEventListener('drop', (e) => { if (e.dataTransfer && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
+$('acct-checks').addEventListener('change', (e) => {
+  const ac = e.target.getAttribute('data-acct'); if (ac == null) return;
+  const p = S.picked.filter((x) => x !== ac);
+  if (e.target.checked) { if (p.length < MAX_ACCTS) p.push(ac); }
+  S.picked = S.accounts.filter((x) => p.includes(x));
+  if (S.picked.length && !S.picked.includes(S.account)) S.account = S.picked[0];
+  renderResult();
+});
 $('acct-select').addEventListener('change', (e) => { S.account = e.target.value; renderResult(); });
 $('make').addEventListener('click', make);
 $('reset').addEventListener('click', () => {
