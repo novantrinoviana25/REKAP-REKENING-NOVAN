@@ -269,6 +269,23 @@ h2 { font-size: 20px; }
 .an .lrow > span:first-child { font-weight: 600; }
 .an .lrow .amt { text-align: left; color: var(--muted); font-size: 12.5px; }
 .an .loanbox .lrow .amt { color: #94A3B8; }
+
+.an .mtab { display: flex; flex-direction: column; font-size: 13.5px; }
+.an .mtab > div { display: grid; grid-template-columns: .9fr 1.1fr 1.1fr; gap: 8px; padding: 9px 0; border-bottom: 1px dashed rgba(148,163,184,.3); }
+.an .mtab .mh { color: #94A3B8; font-size: 12px; font-weight: 600; }
+.an .mtab .mr span:first-child { font-weight: 600; color: #fff; }
+.an .mtab .mr span:not(:first-child) { font-variant-numeric: tabular-nums; display: flex; flex-direction: column; }
+.an .mtab .mr b { color: #fff; font-weight: 700; }
+.an .mtab .mr em { font-style: normal; color: #34D399; font-size: 12.5px; white-space: nowrap; }
+.an .ld { background: var(--navy-2); border: 1px solid rgba(148,163,184,.18); border-radius: 16px; }
+.an .ld summary { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 12px 14px; align-items: center; }
+.an .ld .ln { color: #fff; font-weight: 700; }
+.an .ld .lt { color: var(--mint); font-size: 12.5px; text-align: right; font-variant-numeric: tabular-nums; line-height: 1.5; }
+.an .ld .lm { padding: 0 14px 12px; display: flex; flex-direction: column; gap: 10px; }
+.an .ld .lmr { display: flex; flex-direction: column; gap: 2px; border-top: 1px dashed rgba(148,163,184,.3); padding-top: 10px; font-size: 13px; }
+.an .ld .lmr b { color: #fff; font-weight: 600; }
+.an .ld .lmr span { color: #E2E8F0; font-variant-numeric: tabular-nums; }
+.an .ld .lmr small { color: #94A3B8; font-size: 12px; line-height: 1.5; margin-bottom: 4px; }
 </style>
 
 <header class="appbar">
@@ -887,22 +904,29 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (outflow >= x.t.kredit * 0.7) out.passThrough.push({ day: x.t.day, mon: x.t.mon, v: x.t.kredit, out: outflow, desc: x.t.desc || '' });
     });
     // ringkasan pinjaman
-    var L = {}, rec = {};
-    function lend(n) { return L[n] || (L[n] = { name: n, cair: 0, cairN: 0, ang: 0, angN: 0 }); }
+    var L = {}, rec = {}, MO = {};
+    function mlabel(sx) { var b = sx.bulan || ''; return b.charAt(0).toUpperCase() + b.slice(1).toLowerCase() + ' ' + sx.year; }
+    function mon(map, sx) { var k = sx.year * 100 + sx.month; return map[k] || (map[k] = { key: k, label: mlabel(sx), cairN: 0, cair: 0, angN: 0, ang: 0, cairItems: [], angItems: [] }); }
+    function lend(n) { return L[n] || (L[n] = { name: n, cair: 0, cairN: 0, ang: 0, angN: 0, mo: {} }); }
     all.forEach(function (x) {
       var t = x.t;
-      if (x.cat === 'pencairan' && t.kredit) { var a = lend(lenderOf(t.desc || '')); a.cair += t.kredit; a.cairN++; }
+      if (x.cat === 'pencairan' && t.kredit) {
+        var a = lend(lenderOf(t.desc || '')); a.cair += t.kredit; a.cairN++;
+        [mon(MO, x.s), mon(a.mo, x.s)].forEach(function (m) { m.cairN++; m.cair += t.kredit; m.cairItems.push({ day: t.day, mon: t.mon, v: t.kredit }); });
+      }
       else if (x.cat === 'angsuran' && t.debet) {
         var n = lenderOf(t.desc || ''), b = lend(n); b.ang += t.debet; b.angN++;
+        [mon(MO, x.s), mon(b.mo, x.s)].forEach(function (m) { m.angN++; m.ang += t.debet; m.angItems.push({ day: t.day, mon: t.mon, v: t.debet }); });
         var key = n + '|' + t.debet; var r = rec[key] || (rec[key] = { name: n, v: t.debet, months: {}, n: 0 });
         r.months[x.s.year * 100 + x.s.month] = 1; r.n++;
       }
     });
-    var lenders = Object.keys(L).map(function (k) { return L[k]; }).sort(function (a, b) { return (b.cair + b.ang) - (a.cair + a.ang); });
+    function sortedMonths(map) { return Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) { return a.key - b.key; }); }
+    var lenders = Object.keys(L).map(function (k) { var l = L[k]; l.months = sortedMonths(l.mo); return l; }).sort(function (a, b) { return (b.cair + b.ang) - (a.cair + a.ang); });
     var recurring = Object.keys(rec).map(function (k) { var r = rec[k]; r.nMonths = Object.keys(r.months).length; return r; })
       .filter(function (r) { return r.nMonths >= 2 && r.v >= 50000; }).sort(function (a, b) { return b.v - a.v; });
     out.loan = { cair: out.kredit.pencairan.total, cairN: out.kredit.pencairan.n, ang: out.debit.angsuran.total, angN: out.debit.angsuran.n,
-      lenders: lenders, recurring: recurring, net: out.kredit.pencairan.total - out.debit.angsuran.total };
+      lenders: lenders, months: sortedMonths(MO), recurring: recurring, net: out.kredit.pencairan.total - out.debit.angsuran.total };
     var kp = out.debit.konsumtif.total, pr = out.debit.produktif.total, cls = kp + pr;
     out.share = {}; ['konsumtif', 'produktif', 'tarikTunai', 'angsuran'].forEach(function (c) { out.share[c] = out.totD ? out.debit[c].total / out.totD : 0; });
     out.clearShare = out.totD ? cls / out.totD : 0;
@@ -1781,41 +1805,29 @@ function renderAnalysis(list) {
   const box = $('analysis');
   let A;
   try { A = RekapCore.analyze(list); } catch (e) { show(box, false); return; }
-  if (!A.totD && !A.totK) { show(box, false); return; }
-  const pct = (v, t) => (t ? Math.round((v / t) * 100) : 0);
-  const grp = (obj, total, cls) => Object.values(obj).filter((g) => g.n).sort((x, y) => y.total - x.total).map((g) => {
-    const top = g.items.slice(0, g.cat === 'lain' ? 8 : 5);
-    return '<details class="' + cls + '"><summary><span>' + esc(g.label) + ' · ' + fmtInt(g.n) + ' transaksi</span><span class="amt">' + rp(g.total) + ' (' + pct(g.total, total) + '%)</span>' +
-      '<span class="bar"><i style="width:' + Math.max(2, pct(g.total, total)) + '%"></i></span></summary><ul class="items">' +
-      top.map((i) => '<li><span>' + i.day + ' ' + MON_ID[i.mon - 1] + ' · ' + esc(i.desc || '(tanpa keterangan)') + '</span><span class="amt">' + rp(i.v) + '</span></li>').join('') +
-      '</ul></details>';
-  }).join('');
-  const v = A.verdict;
-  const agenShare = (A.totD + A.totK) ? (A.debit.agen.total + A.kredit.agen.total) / (A.totD + A.totK) : 0;
-  let h = '<h3>Analisa rekening (perkiraan otomatis)' + (S.accounts.length > 1 ? ' · ' + esc((S.acctInfo[S.account].bank || '') + ' ' + S.account) : '') + '</h3>' +
-    '<div class="verdict ' + (v.code === 'unclear' ? 'unclear' : '') + '"><b>' + esc(v.text) + '</b>' +
-    '<small>Konsumtif ' + pct(A.debit.konsumtif.total, A.totD) + '% · Produktif ' + pct(A.debit.produktif.total, A.totD) + '% · Tarik tunai ' + pct(A.debit.tarikTunai.total, A.totD) +
-    '% · Angsuran ' + pct(A.debit.angsuran.total, A.totD) + '% dari total debet. Yang bisa dikenali dari keterangan: ' + Math.round(A.clearShare * 100) + '% dari total debet.</small></div>';
   const LN = A.loan;
-  if (LN.cairN || LN.angN) {
-    h += '<div class="loanbox"><h3>Pinjaman</h3>' +
-      '<div class="lsum"><div><small>Pencairan masuk</small><b>' + rp(LN.cair) + '</b><small>' + LN.cairN + ' transaksi · ' + pct(LN.cair, A.totK) + '% dari total kredit</small></div>' +
-      '<div><small>Angsuran/pelunasan keluar</small><b>' + rp(LN.ang) + '</b><small>' + LN.angN + ' transaksi · ' + pct(LN.ang, A.totD) + '% dari total debet</small></div>' +
-      '<div><small>Selisih (cair − angsuran)</small><b>' + (LN.net < 0 ? '−' : '') + rp(Math.abs(LN.net)) + '</b><small>' + (LN.net >= 0 ? 'lebih banyak cair' : 'lebih banyak bayar') + '</small></div></div>';
-    h += '<div class="grp"><span class="gt">Per pemberi pinjaman</span>' + LN.lenders.map((x) =>
-      '<div class="lrow"><span>' + esc(x.name) + '</span><span class="amt">cair ' + rp(x.cair) + ' (' + x.cairN + 'x) · bayar ' + rp(x.ang) + ' (' + x.angN + 'x)</span></div>').join('') + '</div>';
-    if (LN.recurring.length) h += '<div class="grp"><span class="gt">Angsuran berulang (nominal sama, ≥2 bulan)</span>' + LN.recurring.slice(0, 6).map((r) =>
-      '<div class="lrow"><span>' + esc(r.name) + '</span><span class="amt">' + rp(r.v) + ' · ' + r.n + 'x di ' + r.nMonths + ' bulan</span></div>').join('') + '</div>';
-    if (LN.cairN) h += '<details class="g-k"><summary><span>Daftar pencairan terbesar</span><span class="amt">' + rp(LN.cair) + '</span></summary><ul class="items">' +
-      A.kredit.pencairan.items.slice(0, 8).map((i) => '<li><span>' + i.day + ' ' + MON_ID[i.mon - 1] + ' · ' + esc(i.desc || '(tanpa keterangan)') + '</span><span class="amt">' + rp(i.v) + '</span></li>').join('') + '</ul></details>';
-    h += '<div class="hint2">Pemberi pinjaman dikenali dari kata kunci pada keterangan, jadi bisa meleset. Pencairan dan angsuran yang keterangannya tidak memuat kata pinjaman tidak ikut terhitung. Kartu kredit dihitung sebagai angsuran.</div></div>';
-  } else h += '<div class="hint2">Tidak ada transaksi yang keterangannya terbaca sebagai pinjaman (pencairan maupun angsuran).</div>';
-  if (A.passThrough.length) h += '<div class="alert"><b>Kredit besar yang hampir habis keluar dalam 3 hari (' + A.passThrough.length + ')</b><span>' +
-    A.passThrough.slice(0, 4).map((i) => i.day + ' ' + MON_ID[i.mon - 1] + ' masuk ' + rp(i.v) + ', keluar ' + rp(i.out) + ' · ' + esc(i.desc.slice(0, 60))).join('<br>') + '</span></div>';
-  if (agenShare >= 0.3) h += '<div class="hint2">Banyak transaksi bertanda agen pembayaran (BRILink dan sejenisnya, ' + Math.round(agenShare * 100) + '% dari seluruh nilai transaksi). Rekening ini kemungkinan dipakai sebagai rekening agen, jadi pola konsumtif atau produktifnya kurang mewakili pribadi.</div>';
-  h += '<div class="grp g-d"><span class="gt">Debet · ' + rp(A.totD) + '</span>' + grp(A.debit, A.totD, 'g-d') + '</div>';
-  h += '<div class="grp g-k"><span class="gt">Kredit · ' + rp(A.totK) + '</span>' + grp(A.kredit, A.totK, 'g-k') + '</div>';
-  h += '<div class="hint2">Penggolongan memakai kata kunci pada keterangan transaksi, jadi hanya perkiraan. Transfer antar orang biasanya tidak bisa dipastikan tujuannya dan masuk “tidak jelas” atau “belum terklasifikasi”. Buka tiap baris untuk melihat transaksi terbesarnya, dan nilai sendiri sebelum dipakai sebagai dasar keputusan.</div>';
+  const pct = (v, t) => (t ? Math.round((v / t) * 100) : 0);
+  const dl = (items) => items.map((i) => i.day + ' ' + MON_ID[i.mon - 1] + ' ' + rp(i.v)).join(' · ');
+  let h = '<div class="loanbox"><h3>Pinjaman' + (S.accounts.length > 1 ? ' · ' + esc((S.acctInfo[S.account].bank || '') + ' ' + S.account) : '') + '</h3>';
+  if (!LN.cairN && !LN.angN) {
+    h += '<p class="hint2">Tidak ada transaksi yang keterangannya terbaca sebagai pinjaman (pencairan maupun angsuran).</p></div>';
+    box.innerHTML = h; show(box, true); return;
+  }
+  h += '<div class="lsum"><div><small>Pencairan masuk</small><b>' + rp(LN.cair) + '</b><small>' + LN.cairN + ' transaksi · ' + pct(LN.cair, A.totK) + '% dari total kredit</small></div>' +
+    '<div><small>Angsuran/pelunasan keluar</small><b>' + rp(LN.ang) + '</b><small>' + LN.angN + ' transaksi · ' + pct(LN.ang, A.totD) + '% dari total debet</small></div>' +
+    '<div><small>Selisih (cair − angsuran)</small><b>' + (LN.net < 0 ? '−' : '') + rp(Math.abs(LN.net)) + '</b><small>' + (LN.net >= 0 ? 'lebih banyak cair' : 'lebih banyak bayar') + '</small></div></div>';
+  // rekap per bulan
+  h += '<div class="grp"><span class="gt">Per bulan</span><div class="mtab"><div class="mh"><span>Bulan</span><span>Pencairan</span><span>Angsuran</span></div>' +
+    LN.months.map((m) => '<div class="mr"><span>' + esc(m.label) + '</span><span>' + (m.cairN ? '<b>' + m.cairN + 'x</b><em>' + rp(m.cair) + '</em>' : '-') + '</span><span>' + (m.angN ? '<b>' + m.angN + 'x</b><em>' + rp(m.ang) + '</em>' : '-') + '</span></div>').join('') + '</div></div>';
+  // per pemberi pinjaman, rinci per bulan
+  h += '<div class="grp"><span class="gt">Per pemberi pinjaman</span>' + LN.lenders.map((x) =>
+    '<details class="ld"><summary><span class="ln">' + esc(x.name) + '</span><span class="lt">' + (x.cairN ? 'cair ' + x.cairN + 'x · ' + rp(x.cair) : '') + (x.cairN && x.angN ? '<br>' : '') + (x.angN ? 'bayar ' + x.angN + 'x · ' + rp(x.ang) : '') + '</span></summary>' +
+    '<div class="lm">' + x.months.map((m) => '<div class="lmr"><b>' + esc(m.label) + '</b>' +
+      (m.cairN ? '<span>Cair ' + m.cairN + 'x · ' + rp(m.cair) + '</span><small>' + dl(m.cairItems) + '</small>' : '') +
+      (m.angN ? '<span>Bayar ' + m.angN + 'x · ' + rp(m.ang) + '</span><small>' + dl(m.angItems) + '</small>' : '') + '</div>').join('') + '</div></details>').join('') + '</div>';
+  if (LN.recurring.length) h += '<div class="grp"><span class="gt">Angsuran berulang (nominal sama, ≥2 bulan)</span>' + LN.recurring.slice(0, 6).map((r) =>
+    '<div class="lrow"><span>' + esc(r.name) + '</span><span class="amt">' + rp(r.v) + ' · ' + r.n + 'x di ' + r.nMonths + ' bulan</span></div>').join('') + '</div>';
+  h += '<p class="hint2">Pemberi pinjaman dikenali dari kata kunci pada keterangan, jadi bisa meleset. Pencairan dan angsuran yang keterangannya tidak memuat kata pinjaman tidak ikut terhitung. Kartu kredit dihitung sebagai angsuran.</p></div>';
   box.innerHTML = h; show(box, true);
 }
 
