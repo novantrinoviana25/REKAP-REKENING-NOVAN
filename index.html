@@ -286,6 +286,12 @@ h2 { font-size: 20px; }
 .an .ld .lmr b { color: #fff; font-weight: 600; }
 .an .ld .lmr span { color: #E2E8F0; font-variant-numeric: tabular-nums; }
 .an .ld .lmr small { color: #94A3B8; font-size: 12px; line-height: 1.5; margin-bottom: 4px; }
+.banks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 2px 0 6px; }
+.bk { text-align: center; padding: 8px 4px; border-radius: 999px; font-size: 13px; font-weight: 700; letter-spacing: .2px; color: #fff; white-space: nowrap; }
+.b-bri { background: #1D4ED8; } .b-mandiri { background: #0F2E6B; } .b-bca { background: #0B5CAB; } .b-bsi { background: #0E9F8E; }
+.b-bjb { background: #B45309; } .b-bni { background: #E4572E; } .b-cimb { background: #9F1239; } .b-sea { background: #0891B2; }
+.intro .tag { color: var(--ink, #0F172A); font-weight: 600; font-size: 15px; margin: 2px 0 0; }
+.intro .tag .kar { color: var(--accent, #059669); }
 </style>
 
 <header class="appbar">
@@ -300,7 +306,7 @@ h2 { font-size: 20px; }
 
 <div class="page">
   <div class="intro">
-    <p>Upload PDF rekening koran BRI, Mandiri, BCA, BSI, BJB, BNI, CIMB Niaga, atau SeaBank. Tanggal, debet, dan kredit langsung masuk ke template Excel, rumus dan lampiran rekap tetap utuh.</p>
+    <p class="tag">Upload e-statement PDF, hasilnya langsung jadi Excel.<br><span class="kar">karya Novan Tri Noviana</span></p>
     <p>PDF dibaca di perangkatmu sendiri dan tidak dikirim ke server mana pun.</p>
   </div>
 
