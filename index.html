@@ -1627,7 +1627,17 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
       const statusEl = overlay.querySelector(".pg-status");
       const timerEl = overlay.querySelector(".pg-timer");
-      let stopped = false;
+      let stopped = false, paidHandled = false;
+      function showSuccess(o) {
+        const box = overlay.querySelector(".pg-box");
+        box.innerHTML = `
+          <div class="pg-ok" aria-hidden="true"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+          <h3>Pembayaran berhasil</h3>
+          <p class="pg-amount">${rupiah(o.amount)}</p>
+          <p class="pg-pages">${o.pages ? o.pages + " lembar" : ""}</p>
+          <p class="pg-hint">Terima kasih. File Excel sedang disusun dan akan terunduh otomatis.</p>
+          <p class="pg-ref">No. pesanan: ${String(o.order_id || "").replace(/[<>&]/g, "")}</p>`;
+      }
 
       function finish(fn, val) {
         if (stopped) return;
@@ -1651,10 +1661,17 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const poll = setInterval(async () => {
         try {
           const st = await api("/api/status?order_id=" + encodeURIComponent(order.order_id));
-          if (st.status === "paid") {
-            statusEl.textContent = "Pembayaran diterima ✓";
-            const c = await api("/api/claim", post({ order_id: order.order_id }));
-            if (c.ok) return finish(resolve, order.order_id);
+          if (st.status === "paid" && !paidHandled) {
+            paidHandled = true;
+            statusEl.textContent = "Pembayaran diterima, memvalidasi…";
+            let c = null;
+            try { c = await api("/api/claim", post({ order_id: order.order_id })); } catch (e) { c = null; }
+            if (c && c.ok) {
+              clearInterval(poll); clearInterval(tick);
+              showSuccess(order);
+              return setTimeout(() => finish(resolve, order.order_id), 2600);
+            }
+            paidHandled = false;
             statusEl.textContent = "Gagal memvalidasi pembayaran";
           } else if (["expired", "failed"].includes(st.status)) {
             clearSaved();
@@ -1698,6 +1715,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       .pg-hint{font-size:12px;color:#666;margin:10px 0 6px}
       .pg-status{font-size:14px;font-weight:600;margin:6px 0 2px}
       .pg-timer{font-size:12px;color:#888;margin:0}
+      .pg-ok{width:64px;height:64px;border-radius:50%;background:#059669;margin:4px auto 12px;display:flex;align-items:center;justify-content:center;animation:pgpop .35s ease-out}
+      .pg-ref{font-size:11px;color:#888;margin:10px 0 0;word-break:break-all}
+      @keyframes pgpop{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
       .pg-close{position:absolute;top:8px;right:12px;border:0;background:none;font-size:26px;cursor:pointer;color:#888}`;
     const el = document.createElement("style");
     el.id = "pg-styles";
@@ -2030,7 +2050,7 @@ async function make() {
       S.paying = false;
     }
   }
-  const st = $('status'); st.className = 'status'; st.textContent = 'Menyusun file Excel…';
+  const st = $('status'); st.className = 'status'; st.textContent = (window.PayGate && PayGate.enabled()) ? 'Pembayaran berhasil. Menyusun file Excel…' : 'Menyusun file Excel…';
   $('make').disabled = true;
   try {
     const mapMonths = (l) => l.map((s) => ({ bulan: s.bulan, days: s.days, opening: s.opening, txs: s.txs }));
