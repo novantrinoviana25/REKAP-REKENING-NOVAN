@@ -887,6 +887,59 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return stmts;
   }
 
+
+  /* ---------------- BSI Bisnis (Mutasi Rekening, kolom Debet/Kredit/Saldo Riil) ---------------- */
+  function parseBsiBisPages(pages, onProgress) {
+    var stmts = [], cur = null;
+    pages.forEach(function (page, pi) {
+      var lines = groupLines(page), text = pageText(lines);
+      if (/Total Debet \(Dalam Periode\)/.test(text) && /Saldo riil awal/i.test(text)) {
+        cur = newStmt('BSI BISNIS', pi + 1); stmts.push(cur);
+        cur.descMinX = 600; cur.descMaxX = 830; cur.descClean = true;
+        var m;
+        if ((m = text.match(/REKENING\s*:\s*[A-Z]{3}\s+(\d{6,})/))) cur.accountNo = m[1];
+        if ((m = text.match(/Periode\s*:\s*\d{2}\/(\d{2})\/(\d{4})/))) { cur.month = +m[1]; cur.year = +m[2]; }
+        var td = text.match(/Total Debet \(Dalam Periode\)\s*:\s*([\d,]+\.\d{2})/), tk = text.match(/Total Kredit \(Dalam Periode\)\s*:\s*([\d,]+\.\d{2})/);
+        var sa = [], re = /Saldo riil awal per\s+(\d{2})\/(\d{2})\/(\d{4})\s*:\s*([\d,]+\.\d{2})/gi, mm;
+        while ((mm = re.exec(text))) sa.push({ d: +mm[3] * 10000 + +mm[2] * 100 + +mm[1], v: numEN(mm[4]) });
+        sa.sort(function (a, b) { return a.d - b.d; });
+        if (td && tk && sa.length >= 2) cur.summary = { opening: sa[0].v, debet: numEN(td[1]), kredit: numEN(tk[1]), closing: sa[sa.length - 1].v };
+      }
+      if (!cur) return;
+      cur.pages++;
+      var lastDate = null;
+      lines.forEach(function (l, li) {
+        var dt = l.items.filter(function (t) { return t.x > 80 && t.x < 140 && /^\d{2}-\d{2}-\d{4}$/.test(t.str.trim()); })[0];
+        if (dt) { var p = dt.str.trim().split('-'); lastDate = { day: +p[0], mon: +p[1] }; }
+        var no = l.items.filter(function (t) { return t.x < 60 && /^\d{1,4}$/.test(t.str.trim()); })[0];
+        if (!no || !lastDate) return;
+        var deb = null, kre = null, sal = null;
+        l.items.forEach(function (t) {
+          var s = t.str.trim();
+          if (t.x > 780 && t.x < 900 && /^[\d,]+\.\d{2}-$/.test(s)) deb = numEN(s.replace('-', ''));
+          else if (t.x >= 900 && t.x < 990 && NUM_EN.test(s)) kre = numEN(s);
+          else if (t.x >= 990 && t.x < 1090 && NUM_EN.test(s)) sal = numEN(s);
+        });
+        if (deb == null && kre == null) {
+          l.items.forEach(function (t) {
+            var mm2 = t.x > 590 && t.x < 900 && t.str.trim().match(/\s([\d,]+\.\d{2})(-?)$/);
+            if (mm2) { if (mm2[2]) deb = numEN(mm2[1]); else kre = numEN(mm2[1]); }
+          });
+        }
+        if (sal == null || (deb == null && kre == null)) return;
+        cur.txs.push({ _y: l.y, _pg: pi, day: lastDate.day, mon: lastDate.mon, debet: deb || 0, kredit: kre || 0, saldo: sal });
+        lastDate = null;
+        if (!cur.name && deb) {
+          var nm = pages[pi].items.filter(function (it) { return it.x > 295 && it.x < 385 && it.y < l.y + 22 && it.y > l.y - 22; });
+          nm.sort(function (a, b) { return Math.abs(b.y - a.y) > 2.2 ? b.y - a.y : a.x - b.x; });
+          cur.name = txt(nm);
+        }
+      });
+      if (onProgress) onProgress(pi + 1, pages.length);
+    });
+    return stmts;
+  }
+
   /* PDF berupa gambar (tanpa teks)? */
   function isImageOnly(pages) {
     var n = 0;
@@ -903,7 +956,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       s.txs.forEach(function (t) { if (t._pg != null) (by[t._pg] = by[t._pg] || []).push(t); });
       Object.keys(by).forEach(function (pg) {
         var arr = by[pg].slice().sort(function (a, b) { return b._y - a._y; });
-        var items = pages[+pg].items.filter(function (i) { return i.str && i.str.trim() && !NOISE.test(i.str.trim()); });
+        var items = pages[+pg].items.filter(function (i) { return i.str && i.str.trim() && !NOISE.test(i.str.trim()) && (!s.descMinX || (i.x >= s.descMinX && i.x < s.descMaxX)); });
+        if (s.descClean) items = items.map(function (i) { return { str: i.str.replace(/\s[\d,]+\.\d{2}-?\s*$/, ''), x: i.x, y: i.y }; });
         arr.forEach(function (t, i) {
           var top = i === 0 ? t._y + (s.descTop || 22) : (arr[i - 1]._y + t._y) / 2;
           var bot = i === arr.length - 1 ? t._y - (s.descBot || 22) : (t._y + arr[i + 1]._y) / 2;
@@ -1037,10 +1091,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   }
 
   /* ---------------- deteksi & pemeriksaan ---------------- */
-  var BANKS = { BRI: parseBriPages, MANDIRI: parseMandiriPages, BCA: parseBcaPages, BSI: parseBsiPages, BJB: parseBjbPages, KOPRA: parseKopraPages, MANDIRI_KONSOL: parseConsPages, SEABANK: parseSeaPages, BNI: parseBniPages, CIMB: parseCimbPages };
+  var BANKS = { BRI: parseBriPages, MANDIRI: parseMandiriPages, BCA: parseBcaPages, BSI: parseBsiPages, BJB: parseBjbPages, KOPRA: parseKopraPages, MANDIRI_KONSOL: parseConsPages, SEABANK: parseSeaPages, BNI: parseBniPages, CIMB: parseCimbPages, BSIBIS: parseBsiBisPages };
   function detectBank(pages) {
     for (var pi = 0; pi < pages.length; pi++) {
       var t = pageText(groupLines(pages[pi]));
+      if (/Mutasi Rekening/.test(t) && /Total Debet \(Dalam Periode\)/.test(t) && /Saldo riil awal/i.test(t)) return 'BSIBIS';
       if (/RINGKASAN REKENING/.test(t) && /SEABANK/.test(t)) return 'SEABANK';
       if (/Laporan Mutasi Rekening/.test(t) && /Total Pemasukan/.test(t) && /Total Pengeluaran/.test(t)) return 'BNI';
       if (/Nomor Rekening - Mata Uang/.test(t) && /Uraian Transaksi|Detail Transaction/.test(t)) return 'CIMB';
