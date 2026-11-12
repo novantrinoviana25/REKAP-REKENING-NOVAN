@@ -940,6 +940,93 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return stmts;
   }
 
+
+  /* ---------------- CIMB OCTO / CASA (Laporan Rekening/Statement of Account) ---------------- */
+  function parseOctoPages(pages, onProgress) {
+    var stmts = [], cur = null;
+    pages.forEach(function (page, pi) {
+      var lines = groupLines(page), text = pageText(lines);
+      if (/Laporan Rekening\/Statement of Account/.test(text) && /No\. Rekening/.test(text)) {
+        cur = newStmt('CIMB OCTO', pi + 1); stmts.push(cur);
+        cur.descMinX = 80; cur.descMaxX = 340; cur.descBelow = true;
+        var m;
+        if ((m = text.match(/No\. Rekening\s*:\s*(\d{6,})/))) cur.accountNo = m[1];
+        if ((m = text.match(/Nama\s*:\s*(.+?)\s+Mata Uang/))) cur.name = m[1].trim();
+        if ((m = text.match(/Periode:\s*\d{1,2}\s+([A-Za-z]+)\s+(\d{4})/))) { cur.month = monthFromName(m[1]); cur.year = +m[2]; }
+      }
+      if (!cur) return;
+      cur.pages++;
+      lines.forEach(function (l) {
+        var dt = l.items.filter(function (t) { return t.x < 60 && /^\d{2} [A-Za-z]{3} \d{4}$/.test(t.str.trim()); })[0];
+        if (dt) {
+          var p = dt.str.trim().split(' '), nums = l.items.filter(function (t) { return t.x > 300 && /^-?[\d,]+\.\d{2}$/.test(t.str.trim()); });
+          if (nums.length < 2) return;
+          var sd = nums[nums.length - 1], am = nums[nums.length - 2], a = am.str.trim(), v = numEN(a.replace('-', ''));
+          cur.txs.push({ _y: l.y, _pg: pi, day: +p[0], mon: MON3[p[1].toLowerCase()], debet: a.charAt(0) === '-' ? v : 0, kredit: a.charAt(0) === '-' ? 0 : v, saldo: numEN(sd.str.trim()) });
+          return;
+        }
+        var t2 = l.text.match(/^(Saldo Awal|Total Kredit|Total Debit|Saldo Akhir)\s+IDR\s+([\d,]+\.\d{2})$/);
+        if (t2) {
+          cur.summary = cur.summary || {};
+          var k = { 'Saldo Awal': 'opening', 'Total Kredit': 'kredit', 'Total Debit': 'debet', 'Saldo Akhir': 'closing' }[t2[1]];
+          cur.summary[k] = numEN(t2[2]);
+        }
+      });
+      if (onProgress) onProgress(pi + 1, pages.length);
+    });
+    stmts.forEach(function (s) { if (s.summary && (s.summary.closing == null || s.summary.opening == null)) s.summary = null; });
+    return stmts;
+  }
+
+  /* ---------------- GoPay (E-statement riwayat transaksi, saldo GoPay / Tabungan) ---------------- */
+  function parseGopayPages(pages, onProgress) {
+    var stmts = [], cur = null;
+    var idn = function (s) { return parseInt(String(s).replace(/\./g, ''), 10); };
+    pages.forEach(function (page, pi) {
+      var lines = groupLines(page), text = pageText(lines);
+      if (/Total pemasukan/.test(text) && /Total pengeluaran/.test(text) && /Total Coins/.test(text)) {
+        cur = newStmt('GOPAY', pi + 1); stmts.push(cur);
+        cur.descDone = true;
+        var m;
+        if ((m = text.match(/Periode transaksi\s*:\s*\d{1,2}\s+([A-Za-z]+)\s+(\d{4})/))) { cur.month = monthFromName(m[1]); cur.year = +m[2]; }
+        lines.forEach(function (l, li) {
+          if (/Total Coins/.test(l.text) && lines[li + 1] && lines[li + 2]) {
+            var rp = lines[li + 2].items.filter(function (t) { return /^Rp[\d.]+$/.test(t.str.trim()); });
+            if (rp.length === 2) cur.pdfTot = { kredit: idn(rp[0].str.slice(2)), debet: idn(rp[1].str.slice(2)) };
+          }
+          if (!cur.name && li > 0 && /Total Coins/.test((lines[li] || {}).text || '')) { /* nama ada di baris atas */ }
+        });
+        var nm = lines.filter(function (l) { return l.items[0] && l.items[0].x < 40 && l.y > 740 && l.y < 790; })[0];
+        if (nm) cur.name = txt(nm.items.filter(function (t) { return t.x < 200; }));
+        var ph = text.match(/(\+\d{8,})/); if (ph) cur.accountNo = ph[1];
+      }
+      if (!cur) return;
+      cur.pages++;
+      lines.forEach(function (l) {
+        var dt = l.items.filter(function (t) { return t.x < 50 && /^\d{2}\/\d{2}\/\d{4}$/.test(t.str.trim()); })[0];
+        if (!dt) return;
+        var meth = txt(l.items.filter(function (t) { return t.x > 370 && t.x < 500; })), am = l.items.filter(function (t) { return t.x >= 500 && /^-?Rp[\d.]+$/.test(t.str.trim()); })[0];
+        if (!am || !/^(GoPay|GoPay Saldo|GoPay Tabungan|Tabungan.*)$/i.test(meth)) return;
+        var a = am.str.trim(), v = idn(a.replace('-', '').slice(2)), p = dt.str.trim().split('/');
+        cur.txs.push({ day: +p[0], mon: +p[1], debet: a.charAt(0) === '-' ? v : 0, kredit: a.charAt(0) === '-' ? 0 : v, saldo: null, desc: txt(l.items.filter(function (t) { return t.x > 90 && t.x < 260; })).slice(0, 200) });
+      });
+      if (onProgress) onProgress(pi + 1, pages.length);
+    });
+    stmts.forEach(function (s) {
+      s.txs.reverse(); /* daftar di PDF dari terbaru ke terlama */
+      s.notes = ['GoPay tidak mencantumkan saldo. Saldo awal dianggap Rp0 dan saldo di Excel dihitung dari mutasi; hanya transaksi saldo GoPay/Tabungan (bukan GoPay Coins) yang dimasukkan.'];
+      if (s.pdfTot) {
+        s.summary = { opening: 0, debet: s.pdfTot.debet, kredit: s.pdfTot.kredit, closing: s.pdfTot.kredit - s.pdfTot.debet, tol: 100 };
+        var sd = 0, sk = 0; s.txs.forEach(function (t) { sd += t.debet; sk += t.kredit; });
+        var rp = function (n) { return 'Rp' + n.toLocaleString('id-ID'); }, df = [];
+        if (sd !== s.pdfTot.debet) df.push('pengeluaran di PDF ' + rp(s.pdfTot.debet) + ', terbaca ' + rp(sd) + ' (selisih ' + rp(Math.abs(sd - s.pdfTot.debet)) + ')');
+        if (sk !== s.pdfTot.kredit) df.push('pemasukan di PDF ' + rp(s.pdfTot.kredit) + ', terbaca ' + rp(sk) + ' (selisih ' + rp(Math.abs(sk - s.pdfTot.kredit)) + ')');
+        if (df.length) s.notes.push('Selisih kecil dengan ringkasan PDF: ' + df.join('; ') + '.');
+      }
+    });
+    return stmts;
+  }
+
   /* PDF berupa gambar (tanpa teks)? */
   function isImageOnly(pages) {
     var n = 0;
@@ -952,6 +1039,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   var NOISE = /^[\d.,\-+\/:\s]+(?:\s?(?:[DC]B?|WIB))?$|^(?:WIB|DB|CR|D|K)$/;
   function attachDescs(stmts, pages) {
     stmts.forEach(function (s) {
+      if (s.descDone) return;
       var by = {};
       s.txs.forEach(function (t) { if (t._pg != null) (by[t._pg] = by[t._pg] || []).push(t); });
       Object.keys(by).forEach(function (pg) {
@@ -959,8 +1047,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         var items = pages[+pg].items.filter(function (i) { return i.str && i.str.trim() && !NOISE.test(i.str.trim()) && (!s.descMinX || (i.x >= s.descMinX && i.x < s.descMaxX)); });
         if (s.descClean) items = items.map(function (i) { return { str: i.str.replace(/\s[\d,]+\.\d{2}-?\s*$/, ''), x: i.x, y: i.y }; });
         arr.forEach(function (t, i) {
-          var top = i === 0 ? t._y + (s.descTop || 22) : (arr[i - 1]._y + t._y) / 2;
-          var bot = i === arr.length - 1 ? t._y - (s.descBot || 22) : (t._y + arr[i + 1]._y) / 2;
+          var top = s.descBelow ? t._y + 3 : i === 0 ? t._y + (s.descTop || 22) : (arr[i - 1]._y + t._y) / 2;
+          var bot = s.descBelow ? (i === arr.length - 1 ? t._y - 40 : arr[i + 1]._y + 3) : i === arr.length - 1 ? t._y - (s.descBot || 22) : (t._y + arr[i + 1]._y) / 2;
           var sel = items.filter(function (it) { return it.y <= top && it.y > bot; });
           sel.sort(function (a, b) { return Math.abs(b.y - a.y) > 2.2 ? b.y - a.y : a.x - b.x; });
           t.desc = sel.map(function (it) { return it.str.trim(); }).join(' ')
@@ -1091,10 +1179,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   }
 
   /* ---------------- deteksi & pemeriksaan ---------------- */
-  var BANKS = { BRI: parseBriPages, MANDIRI: parseMandiriPages, BCA: parseBcaPages, BSI: parseBsiPages, BJB: parseBjbPages, KOPRA: parseKopraPages, MANDIRI_KONSOL: parseConsPages, SEABANK: parseSeaPages, BNI: parseBniPages, CIMB: parseCimbPages, BSIBIS: parseBsiBisPages };
+  var BANKS = { BRI: parseBriPages, MANDIRI: parseMandiriPages, BCA: parseBcaPages, BSI: parseBsiPages, BJB: parseBjbPages, KOPRA: parseKopraPages, MANDIRI_KONSOL: parseConsPages, SEABANK: parseSeaPages, BNI: parseBniPages, CIMB: parseCimbPages, BSIBIS: parseBsiBisPages, CIMBOCTO: parseOctoPages, GOPAY: parseGopayPages };
   function detectBank(pages) {
     for (var pi = 0; pi < pages.length; pi++) {
       var t = pageText(groupLines(pages[pi]));
+      if (/Laporan Rekening\/Statement of Account/.test(t) && /No\. Rekening/.test(t) && /Jenis Produk/.test(t)) return 'CIMBOCTO';
+      if (/Total pemasukan/.test(t) && /Total pengeluaran/.test(t) && /Total Coins/.test(t)) return 'GOPAY';
       if (/Mutasi Rekening/.test(t) && /Total Debet \(Dalam Periode\)/.test(t) && /Saldo riil awal/i.test(t)) return 'BSIBIS';
       if (/RINGKASAN REKENING/.test(t) && /SEABANK/.test(t)) return 'SEABANK';
       if (/Laporan Mutasi Rekening/.test(t) && /Total Pemasukan/.test(t) && /Total Pengeluaran/.test(t)) return 'BNI';
@@ -1140,9 +1230,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     s.closing = run;
     var sm = s.summary, c = { hasSummary: !!(sm && sm.closing != null), runningBad: bad, firstBadRow: firstBad, wrongMonth: wrongMonth };
     if (c.hasSummary) {
-      c.debetOk = sm.debet == null ? null : Math.abs(sm.debet - s.sumDebet) < 0.005;
-      c.kreditOk = sm.kredit == null ? null : Math.abs(sm.kredit - s.sumKredit) < 0.005;
-      c.closingOk = Math.abs(sm.closing - s.closing) < 0.005;
+      var tol = sm.tol || 0.005;
+      c.debetOk = sm.debet == null ? null : Math.abs(sm.debet - s.sumDebet) <= tol;
+      c.kreditOk = sm.kredit == null ? null : Math.abs(sm.kredit - s.sumKredit) <= tol;
+      c.closingOk = Math.abs(sm.closing - s.closing) <= tol;
       c.countOk = (sm.nDebet == null && sm.nKredit == null) ? null : ((sm.nDebet == null || sm.nDebet === nD) && (sm.nKredit == null || sm.nKredit === nK));
     }
     s.checks = c;
@@ -1928,7 +2019,7 @@ async function handleFiles(fileList) {
   }
   if (!all.length) {
     showError('<b>Rekening koran tidak terbaca.</b><ul>' + failed.map((x) => '<li>' + esc(x) + '</li>').join('') +
-      '</ul>Aplikasi ini mendukung e-statement PDF dari BRI, Mandiri (Livin\', Kopra, dan Rekening Koran konsolidasi), BCA, BSI, BJB, BNI, CIMB Niaga, dan SeaBank. Pastikan file berasal dari aplikasi atau internet banking, bukan hasil foto atau scan. Untuk bank lain, kirim contoh PDF-nya supaya format bisa ditambahkan.');
+      '</ul>Aplikasi ini mendukung e-statement PDF dari BRI, Mandiri (Livin\', Kopra, dan Rekening Koran konsolidasi), BCA, BSI, BJB, BNI, CIMB Niaga, CIMB OCTO, GoPay, dan SeaBank. Pastikan file berasal dari aplikasi atau internet banking, bukan hasil foto atau scan. Untuk bank lain, kirim contoh PDF-nya supaya format bisa ditambahkan.');
     return;
   }
   if (failed.length) showError('<b>Sebagian file dilewati:</b><ul>' + failed.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>');
@@ -2052,6 +2143,7 @@ function renderResult() {
       '<dt>Total debet</dt><dd>' + fmt(s.sumDebet) + '</dd>' +
       '<dt>Total kredit</dt><dd>' + fmt(s.sumKredit) + '</dd>' +
       '<dt>Saldo akhir</dt><dd class="tot">' + fmt(s.closing) + '</dd></dl>' +
+      ((s.notes || []).length ? '<div class="notice warn" style="margin:0 12px 12px"><b>Catatan:</b><ul>' + s.notes.map((p) => '<li>' + p + '</li>').join('') + '</ul></div>' : '') +
       (problems.length ? '<div class="notice err" style="margin:0 12px 12px"><b>Periksa:</b><ul>' + problems.map((p) => '<li>' + p + '</li>').join('') + '</ul></div>' : '') +
       '<details><summary>Lihat 5 baris pertama</summary><div class="scroll"><table class="prev"><thead><tr><th>TGL</th><th>Debet</th><th>Kredit</th></tr></thead><tbody>' + prev + '</tbody></table></div></details></article>';
   }).join('');
