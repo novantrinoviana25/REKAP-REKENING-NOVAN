@@ -1045,6 +1045,51 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return stmts;
   }
 
+
+  /* ---------------- BNI Taplus (Histori Transaksi dari BNI Mobile Banking, jsPDF) ---------------- */
+  function parseBniTaplusPages(pages, onProgress) {
+    var rows = [], head = {}, curTx = null;
+    var idn = function (s) { return Math.round(parseFloat(String(s).replace(/\./g, '').replace(',', '.')) * 100) / 100; };
+    var JUNK = /^(Uraian Transaksi|Tipe|Nominal|Saldo Akhir|Tanggal|Transaksi|ECHANNEL KARTU|0000000000000000 BIZID|BNI Mobile Banking)$/;
+    pages.forEach(function (page, pi) {
+      var lines = groupLines(page), text = pageText(lines);
+      var hm = text.match(/Transactions List - (.+?) - \(([A-Z]{3})\) - (\d{6,})/);
+      if (hm && !head.accountNo) { head.product = hm[1]; head.accountNo = hm[3]; }
+      lines.forEach(function (l) {
+        if (l.y < 30) return;
+        var dt = l.items.filter(function (t) { return t.x < 100 && /^\d{4}-\d{2}-\d{2}$/.test(t.str.trim()); })[0];
+        if (dt) {
+          var ty = l.items.filter(function (t) { return t.x > 260 && t.x < 310 && /^(Db|Cr)\.?$/.test(t.str.trim()); })[0];
+          var am = l.items.filter(function (t) { return t.x > 320 && t.x < 450 && /^[\d.]+,\d{2}$/.test(t.str.trim()); })[0];
+          var sd = l.items.filter(function (t) { return t.x >= 450 && /^[\d.]+,\d{2}$/.test(t.str.trim()); })[0];
+          if (!ty || !am || !sd) { curTx = null; return; }
+          var p = dt.str.trim().split('-'), v = idn(am.str), isD = /^Db/.test(ty.str.trim());
+          curTx = { year: +p[0], mon: +p[1], day: +p[2], debet: isD ? v : 0, kredit: isD ? 0 : v, saldo: idn(sd.str), _pg: pi, _d: [], first: txt(l.items.filter(function (t) { return t.x >= 120 && t.x < 270; })) };
+          rows.push(curTx); return;
+        }
+        if (!curTx) return;
+        var part = txt(l.items.filter(function (t) { return t.x >= 120 && t.x < 270 && !JUNK.test(t.str.trim()); }));
+        if (part) curTx._d.push(part);
+      });
+      if (onProgress) onProgress(pi + 1, pages.length);
+    });
+    rows.reverse(); /* daftar di PDF dari terbaru ke terlama */
+    var byM = {}, order = [];
+    rows.forEach(function (r) {
+      var k = r.year * 100 + r.mon;
+      if (!byM[k]) { byM[k] = newStmt('BNI', r._pg + 1); byM[k].month = r.mon; byM[k].year = r.year; byM[k].accountNo = head.accountNo || ''; byM[k].descDone = true; byM[k]._pgs = {}; order.push(k); }
+      var d = ([JUNK.test(r.first) ? '' : r.first].concat(r._d.slice().reverse().length ? r._d : [])).filter(Boolean).join(' ').replace(/\s+/g, ' ').slice(0, 200);
+      byM[k]._pgs[r._pg] = 1;
+      byM[k].txs.push({ day: r.day, mon: r.mon, debet: r.debet, kredit: r.kredit, saldo: r.saldo, desc: d });
+    });
+    return order.map(function (k, oi) {
+      var s = byM[k]; s.pages = Object.keys(s._pgs).length; delete s._pgs;
+      s.notes = ['Nama pemilik rekening tidak tertulis di PDF ini, isi kolom Nama rekening secara manual. Rekening: ' + (head.product || 'BNI Taplus') + '.'];
+      if (oi === 0 && rows.length >= 100) s.notes.push('Histori BNI Mobile hanya memuat sampai 100 transaksi terakhir, jadi transaksi paling awal pada periode yang dipilih bisa terpotong dan saldo awal bulan ini dihitung dari transaksi pertama yang tampil.');
+      return s;
+    });
+  }
+
   /* PDF berupa gambar (tanpa teks)? */
   function isImageOnly(pages) {
     var n = 0;
@@ -1144,15 +1189,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     ['BNI', /\bBNI\b|BNINIDJA/], ['BSI', /\bBSI\b|BSMDIDJA|\bSYARIAH INDONESIA\b/], ['BJB', /\bBJB\b|PDJBIDJA|\bBPD JABAR\b|\bBANTEN\b/], ['CIMB NIAGA', /\bCIMB\b|BNIAIDJA|\bOCTO\b/],
     ['PERMATA', /\bPERMATA\b|BBBAIDJA/], ['DANAMON', /\bDANAMON\b|BDINIDJA/], ['BTN', /\bBTN\b|BTANIDJA/], ['JAGO', /\bJAGO\b|ARTOIDJA/], ['SEABANK', /\bSEABANK\b|\bSEA BANK\b|SBSIIDJA/],
     ['BTPN/JENIUS', /\bBTPN\b|\bJENIUS\b|SUNIIDJA/], ['OCBC', /\bOCBC\b|NISPIDJA/], ['MAYBANK', /\bMAYBANK\b|MBBEIDJA/], ['PANIN', /\bPANIN\b|PINBIDJA/],
-    ['MEGA', /\bBANK MEGA\b|MEGAIDJA/], ['MUAMALAT', /\bMUAMALAT\b|MUABIDJA/], ['BANK DKI', /\bBANK DKI\b|BDKIIDJA/], ['BTN SYARIAH', /\bBTN SYARIAH\b/], ['KB BUKOPIN', /\bBUKOPIN\b|\bKB BANK\b|BBUKIDJA/], ['SINARMAS', /\bSINARMAS\b|SBJKIDJA/]
+    ['MEGA', /\bBANK MEGA\b|MEGAIDJA/], ['MUAMALAT', /\bMUAMALAT\b|MUABIDJA/], ['BANK DKI', /\bBANK DKI\b|BDKIIDJA/], ['BTN SYARIAH', /\bBTN SYARIAH\b/], ['KB BUKOPIN', /\bBUKOPIN\b|\bKB BANK\b|BBUKIDJA/], ['BLU BCA DIGITAL', /BBLUIDJA|\bBLU\b/], ['SINARMAS', /\bSINARMAS\b|SBJKIDJA/]
   ];
   var OWN_BANK = { 'BRI': 'BRI', 'MANDIRI': 'MANDIRI', 'MANDIRI KOPRA': 'MANDIRI', 'MANDIRI KONSOLIDASI': 'MANDIRI', 'BCA': 'BCA', 'BSI': 'BSI', 'BSI BISNIS': 'BSI', 'BJB': 'BJB', 'BNI': 'BNI', 'CIMB NIAGA': 'CIMB NIAGA', 'CIMB OCTO': 'CIMB NIAGA', 'SEABANK': 'SEABANK' };
   var TITLES = { PT: 1, CV: 1, UD: 1, SE: 1, SH: 1, SPD: 1, SKOM: 1, HJ: 1, HAJI: 1, BAPAK: 1, IBU: 1, BPK: 1, NY: 1, TN: 1, MR: 1, MRS: 1, DRS: 1, DRA: 1, DR: 1, IR: 1, YAYASAN: 1, KOPERASI: 1 };
   function nameTokens(n) { return String(n || '').toUpperCase().replace(/['’`]/g, '').replace(/[^A-Z ]/g, ' ').split(/\s+/).filter(function (w) { return w.length >= 3 && !TITLES[w]; }); }
-  function selfTransfers(stmts) {
+  function selfTransfers(stmts, nameFallback) {
     var items = [];
     stmts.forEach(function (s) {
-      var own = OWN_BANK[s.bank] || s.bank, toks = nameTokens(s.name), ownCo = /^\s*(PT|CV|UD|YAYASAN|KOPERASI)\b/i.test(s.name || '');
+      var own = OWN_BANK[s.bank] || s.bank, toks = nameTokens(s.name || nameFallback), ownCo = /^\s*(PT|CV|UD|YAYASAN|KOPERASI)\b/i.test(s.name || nameFallback || '');
       if (!toks.length) return;
       s.txs.forEach(function (t) {
         var isIn = t.kredit > 0, v = isIn ? t.kredit : t.debet;
@@ -1250,10 +1295,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   }
 
   /* ---------------- deteksi & pemeriksaan ---------------- */
-  var BANKS = { BRI: parseBriPages, MANDIRI: parseMandiriPages, BCA: parseBcaPages, BSI: parseBsiPages, BJB: parseBjbPages, KOPRA: parseKopraPages, MANDIRI_KONSOL: parseConsPages, SEABANK: parseSeaPages, BNI: parseBniPages, CIMB: parseCimbPages, BSIBIS: parseBsiBisPages, CIMBOCTO: parseOctoPages, GOPAY: parseGopayPages };
+  var BANKS = { BRI: parseBriPages, MANDIRI: parseMandiriPages, BCA: parseBcaPages, BSI: parseBsiPages, BJB: parseBjbPages, KOPRA: parseKopraPages, MANDIRI_KONSOL: parseConsPages, SEABANK: parseSeaPages, BNI: parseBniPages, CIMB: parseCimbPages, BSIBIS: parseBsiBisPages, CIMBOCTO: parseOctoPages, GOPAY: parseGopayPages, BNITAPLUS: parseBniTaplusPages };
   function detectBank(pages) {
     for (var pi = 0; pi < pages.length; pi++) {
       var t = pageText(groupLines(pages[pi]));
+      if (/HISTORI TRANSAKSI/.test(t) && /Transactions List - /.test(t) && /Saldo Akhir/.test(t)) return 'BNITAPLUS';
       if (/Laporan Rekening\/Statement of Account/.test(t) && /No\. Rekening/.test(t) && /Jenis Produk/.test(t)) return 'CIMBOCTO';
       if (/Total pemasukan/.test(t) && /Total pengeluaran/.test(t) && /Total Coins/.test(t)) return 'GOPAY';
       if (/Mutasi Rekening/.test(t) && /Total Debet \(Dalam Periode\)/.test(t) && /Saldo riil awal/i.test(t)) return 'BSIBIS';
@@ -2140,7 +2186,7 @@ const rp = (n) => 'Rp' + Math.round(n).toLocaleString('id-ID');
 const MON_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 function selfHtml(list) {
   let X;
-  try { X = RekapCore.selfTransfers(list); } catch (e) { return ''; }
+  try { X = RekapCore.selfTransfers(list, ($('f-name') && $('f-name').value) || ''); } catch (e) { return ''; }
   let h = '<div class="selfbox"><h3>Transfer rekening sendiri</h3><p class="sx-sub">Masuk dari dan keluar ke rekening atas nama pemilik di bank lain</p>';
   if (!X.n) return h + '<p class="hint2">Tidak ditemukan transfer masuk maupun keluar dengan rekening atas nama pemilik di bank lain.</p></div>';
   const M = X.masuk, K = X.keluar;
@@ -2158,6 +2204,7 @@ function selfHtml(list) {
 }
 
 function renderAnalysis(list) {
+  S.lastList = list;
   const box = $('analysis');
   let A;
   try { A = RekapCore.analyze(list); } catch (e) { show(box, false); return; }
@@ -2242,6 +2289,7 @@ function renderResult() {
   $('f-bank').value = first.bank || '';
   $('f-no').value = first.accountNo;
   $('f-name').value = first.name;
+  if (S.lastList && !first.name) renderAnalysis(S.lastList);
   $('f-kons').value = '';
   const anyBad = list.some((s) => !s.ok);
   $('make').textContent = anyBad ? 'Tetap buat dan simpan Excel' : 'Buat dan simpan Excel';
@@ -2351,6 +2399,8 @@ $('reset').addEventListener('click', () => {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 window.__rekap = { S, handleFiles, make };
+
+$('f-name').addEventListener('input', () => { if (S.lastList && S.lastList[0] && !S.lastList[0].name) renderAnalysis(S.lastList); });
 
 </script>
 
