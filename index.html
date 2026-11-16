@@ -295,7 +295,12 @@ h2 { font-size: 20px; }
 .an .selfbox { background: #fff; border: 1px solid #E2E8F0; border-radius: 24px; padding: 18px; display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
 .an .selfbox h3 { margin: 0; font-size: 17px; color: #0F172A; }
 .an .selfbox .sx-sub { margin: -8px 0 0; color: #64748B; font-size: 13px; }
-.an .sx-sum { display: grid; grid-template-columns: 1.4fr 1fr; gap: 8px; }
+.an .sx-sum { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.an .sx-sum b.in { color: #059669; } .an .sx-sum b.out { color: #B45309; }
+.an .sx-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; padding: 8px 0; border-bottom: 1px solid #E2E8F0; font-size: 13.5px; }
+.an .sx-row2 .sx-mo { grid-column: 1 / -1; font-weight: 600; color: #0F172A; font-size: 14px; }
+.an .sx-cell { display: block; font-variant-numeric: tabular-nums; } .an .sx-cell i { display: block; font-style: normal; font-size: 11.5px; color: #64748B; } .an .sx-cell b { color: #0F172A; display: inline; }
+.an .sx-it em { font-style: normal; font-size: 11.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-right: 4px; } .an .sx-it em.in { background: #D1FAE5; color: #047857; } .an .sx-it em.out { background: #FEF3C7; color: #B45309; }
 .an .sx-sum > div { background: #F1F5F9; border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
 .an .sx-sum small { color: #64748B; font-size: 12px; } .an .sx-sum b { font-size: 16px; color: #059669; }
 .an .sx-grp { display: flex; flex-direction: column; gap: 4px; }
@@ -1136,7 +1141,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   /* ---------------- Deteksi transfer keluar ke rekening sendiri di bank lain ---------------- */
   var XBANKS = [
     ['BCA', /\bBCA\b|CENAIDJA|\bBANK CENTRAL ASIA\b/], ['MANDIRI', /\bMANDIRI\b|BMRIIDJA|\bBMRI\b/], ['BRI', /\bBRI\b|BRINIDJA|\bBRI JKT\b|\bBRIMO\b/],
-    ['BNI', /\bBNI\b|BNINIDJA/], ['BSI', /\bBSI\b|BSMDIDJA|\bSYARIAH INDONESIA\b/], ['BJB', /\bBJB\b|PDJBIDJA/], ['CIMB NIAGA', /\bCIMB\b|BNIAIDJA|\bOCTO\b/],
+    ['BNI', /\bBNI\b|BNINIDJA/], ['BSI', /\bBSI\b|BSMDIDJA|\bSYARIAH INDONESIA\b/], ['BJB', /\bBJB\b|PDJBIDJA|\bBPD JABAR\b|\bBANTEN\b/], ['CIMB NIAGA', /\bCIMB\b|BNIAIDJA|\bOCTO\b/],
     ['PERMATA', /\bPERMATA\b|BBBAIDJA/], ['DANAMON', /\bDANAMON\b|BDINIDJA/], ['BTN', /\bBTN\b|BTANIDJA/], ['JAGO', /\bJAGO\b|ARTOIDJA/], ['SEABANK', /\bSEABANK\b|\bSEA BANK\b|SBSIIDJA/],
     ['BTPN/JENIUS', /\bBTPN\b|\bJENIUS\b|SUNIIDJA/], ['OCBC', /\bOCBC\b|NISPIDJA/], ['MAYBANK', /\bMAYBANK\b|MBBEIDJA/], ['PANIN', /\bPANIN\b|PINBIDJA/],
     ['MEGA', /\bBANK MEGA\b|MEGAIDJA/], ['MUAMALAT', /\bMUAMALAT\b|MUABIDJA/], ['BANK DKI', /\bBANK DKI\b|BDKIIDJA/], ['BTN SYARIAH', /\bBTN SYARIAH\b/], ['KB BUKOPIN', /\bBUKOPIN\b|\bKB BANK\b|BBUKIDJA/], ['SINARMAS', /\bSINARMAS\b|SBJKIDJA/]
@@ -1150,36 +1155,39 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       var own = OWN_BANK[s.bank] || s.bank, toks = nameTokens(s.name), ownCo = /^\s*(PT|CV|UD|YAYASAN|KOPERASI)\b/i.test(s.name || '');
       if (!toks.length) return;
       s.txs.forEach(function (t) {
-        if (!(t.debet > 7500) || !t.desc) return;
+        var isIn = t.kredit > 0, v = isIn ? t.kredit : t.debet;
+        if (!(v > (isIn ? 0 : 7500)) || !t.desc) return;
         var d = ' ' + String(t.desc).toUpperCase().replace(/['’`]/g, '') + ' ', dn = d.replace(/[^A-Z0-9 ]/g, ' ');
         if (/\bBY TRF\b|\bBIAYA\b|\bFEE\b|BELIEMAS|\bTOP ?UP\b/.test(dn)) return;
         if (!ownCo && /\b(PT|CV|UD|YAYASAN|KOPERASI|TOKO)\b/.test(dn)) return;
-        var need = toks.length >= 2 ? 2 : 1;
-        var hit = toks.filter(function (w) { return dn.indexOf(toks.length >= 2 ? w.slice(0, Math.max(4, w.length - 3)) : w) >= 0; }).length;
+        var need = toks.length >= 2 ? 2 : 1, pre1 = function (w) { return toks.length >= 2 ? w.slice(0, Math.max(4, w.length - 3)) : w; };
+        var hit = toks.filter(function (w) { return dn.indexOf(pre1(w)) >= 0; }).length;
         if (hit < need) return;
         // kata tepat sebelum nama pemilik: kalau berupa nama perusahaan/layanan (mis. SMARTEC-NAMA), itu bukan rekening pribadi
-        var pos = 1e9; toks.forEach(function (w) { var k = dn.indexOf(toks.length >= 2 ? w.slice(0, Math.max(4, w.length - 3)) : w); if (k >= 0 && k < pos) pos = k; });
+        var pos = 1e9; toks.forEach(function (w) { var k = dn.indexOf(pre1(w)); if (k >= 0 && k < pos) pos = k; });
         var pre = dn.slice(0, pos).trim().split(/\s+/).filter(Boolean), pw = pre.length ? pre[pre.length - 1] : '';
-        var okPre = !pw || pw.length < 4 || /\d/.test(pw) || /^(TRANSFER|FAST|BIFAST|ONLINE|REMITT|OCTOMOBILE|REMITTANCE|FROM|BANK|KELUAR)$/.test(pw) || XBANKS.some(function (b) { return b[1].test(' ' + pw + ' '); });
+        var okPre = !pw || pw.length < 4 || /\d/.test(pw) || /^(TRANSFER|FAST|BIFAST|ONLINE|REMITT|OCTOMOBILE|REMITTANCE|FROM|BANK|KELUAR|MASUK|LAIN|DARI)$/.test(pw) || XBANKS.some(function (b) { return b[1].test(' ' + pw + ' '); });
         if (!okPre) return;
         if (/\b988\d{13}\b/.test(dn)) return;
         var mentions = XBANKS.filter(function (b) { return b[1].test(dn); }).map(function (b) { return b[0]; });
         var other = mentions.filter(function (m) { return m !== own; })[0];
+        if (!other && /\bBANK LAIN\b/.test(dn)) other = 'Bank lain';
         if (!other) return;
-        if (/\b(DARI|TERIMA|DITERIMA)\b/.test(dn) && !/\b(KE|TO)\b/.test(dn)) return;
-        items.push({ day: t.day, mon: t.mon, year: s.year, v: t.debet, bank: other, desc: String(t.desc).replace(/\s+/g, ' ').slice(0, 120), ord: dayOrd(t, s), key: s.year * 100 + t.mon, label: (BULAN[t.mon - 1] || '') + ' ' + s.year });
+        if (!isIn && /\b(DARI|TERIMA|DITERIMA)\b/.test(dn) && !/\b(KE|TO)\b/.test(dn)) return;
+        items.push({ dir: isIn ? 'in' : 'out', day: t.day, mon: t.mon, year: s.year, v: v, bank: other, desc: String(t.desc).replace(/\s+/g, ' ').slice(0, 120), ord: dayOrd(t, s), key: s.year * 100 + t.mon, label: (BULAN[t.mon - 1] || '') + ' ' + s.year });
       });
     });
     items.sort(function (a, b) { return a.ord - b.ord; });
-    var out = { n: items.length, total: 0, banks: [], months: [], items: items }, bm = {}, mm = {};
-    items.forEach(function (i) {
-      out.total += i.v;
-      var b = bm[i.bank] = bm[i.bank] || { name: i.bank, n: 0, v: 0 }; b.n++; b.v += i.v;
-      var m = mm[i.key] = mm[i.key] || { key: i.key, label: i.label, n: 0, v: 0 }; m.n++; m.v += i.v;
-    });
-    out.banks = Object.keys(bm).map(function (k) { return bm[k]; }).sort(function (a, b) { return b.v - a.v; });
-    out.months = Object.keys(mm).map(function (k) { return mm[k]; }).sort(function (a, b) { return a.key - b.key; });
-    return out;
+    function agg(list) {
+      var o = { n: list.length, total: 0, banks: [], items: list }, bm = {};
+      list.forEach(function (i) { o.total += i.v; var b = bm[i.bank] = bm[i.bank] || { name: i.bank, n: 0, v: 0 }; b.n++; b.v += i.v; });
+      o.banks = Object.keys(bm).map(function (k) { return bm[k]; }).sort(function (a, b) { return b.v - a.v; });
+      return o;
+    }
+    var mm = {};
+    items.forEach(function (i) { var m = mm[i.key] = mm[i.key] || { key: i.key, label: i.label, inN: 0, inV: 0, outN: 0, outV: 0 }; if (i.dir === 'in') { m.inN++; m.inV += i.v; } else { m.outN++; m.outV += i.v; } });
+    return { n: items.length, items: items, masuk: agg(items.filter(function (i) { return i.dir === 'in'; })), keluar: agg(items.filter(function (i) { return i.dir === 'out'; })),
+      months: Object.keys(mm).map(function (k) { return mm[k]; }).sort(function (a, b) { return a.key - b.key; }) };
   }
 
   function analyze(stmts) {
@@ -2133,13 +2141,20 @@ const MON_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', '
 function selfHtml(list) {
   let X;
   try { X = RekapCore.selfTransfers(list); } catch (e) { return ''; }
-  let h = '<div class="selfbox"><h3>Transfer ke rekening sendiri</h3><p class="sx-sub">Transfer keluar ke bank lain atas nama pemilik rekening</p>';
-  if (!X.n) return h + '<p class="hint2">Tidak ditemukan transfer keluar ke rekening atas nama pemilik di bank lain.</p></div>';
-  h += '<div class="sx-sum"><div><small>Total keluar</small><b>' + rp(X.total) + '</b></div><div><small>Jumlah transfer</small><b>' + X.n + 'x</b></div></div>';
-  h += '<div class="sx-grp"><span class="gt">Per bulan</span>' + X.months.map((m) => '<div class="sx-row"><span>' + esc(m.label) + '</span><span><b>' + m.n + 'x</b> · ' + rp(m.v) + '</span></div>').join('') + '</div>';
-  h += '<div class="sx-grp"><span class="gt">Per bank tujuan</span>' + X.banks.map((b) => '<div class="sx-row"><span>' + esc(b.name) + '</span><span><b>' + b.n + 'x</b> · ' + rp(b.v) + '</span></div>').join('') + '</div>';
-  h += '<details class="sx-det"><summary>Lihat semua transfer (' + X.n + ')</summary>' + X.items.map((i) => '<div class="sx-it"><span>' + i.day + ' ' + MON_ID[i.mon - 1] + ' · ' + esc(i.bank) + '</span><b>' + rp(i.v) + '</b><small>' + esc(i.desc) + '</small></div>').join('') + '</details>';
-  return h + '<p class="hint2">Dikenali dari nama penerima pada keterangan yang sama dengan nama pemilik rekening dan bank tujuan yang berbeda. Biaya admin transfer diabaikan. Bisa meleset kalau nama penerima dipotong atau tidak tertulis di keterangan.</p></div>';
+  let h = '<div class="selfbox"><h3>Transfer rekening sendiri</h3><p class="sx-sub">Masuk dari dan keluar ke rekening atas nama pemilik di bank lain</p>';
+  if (!X.n) return h + '<p class="hint2">Tidak ditemukan transfer masuk maupun keluar dengan rekening atas nama pemilik di bank lain.</p></div>';
+  const M = X.masuk, K = X.keluar;
+  h += '<div class="sx-sum"><div><small>Masuk dari rekening sendiri</small><b class="in">' + rp(M.total) + '</b><small>' + M.n + ' transfer</small></div>' +
+    '<div><small>Keluar ke rekening sendiri</small><b class="out">' + rp(K.total) + '</b><small>' + K.n + ' transfer</small></div></div>';
+  h += '<div class="sx-grp"><span class="gt">Per bulan</span>' + X.months.map((m) => '<div class="sx-row2"><span class="sx-mo">' + esc(m.label) + '</span>' +
+    '<span class="sx-cell"><i>Masuk</i>' + (m.inN ? '<b>' + m.inN + 'x</b> · ' + rp(m.inV) : '-') + '</span><span class="sx-cell"><i>Keluar</i>' + (m.outN ? '<b>' + m.outN + 'x</b> · ' + rp(m.outV) : '-') + '</span></div>').join('') + '</div>';
+  const bk = {};
+  M.banks.forEach((b) => { (bk[b.name] = bk[b.name] || { name: b.name, inN: 0, inV: 0, outN: 0, outV: 0 }).inN = b.n; bk[b.name].inV = b.v; });
+  K.banks.forEach((b) => { (bk[b.name] = bk[b.name] || { name: b.name, inN: 0, inV: 0, outN: 0, outV: 0 }).outN = b.n; bk[b.name].outV = b.v; });
+  h += '<div class="sx-grp"><span class="gt">Per bank rekening sendiri</span>' + Object.values(bk).sort((a, b) => b.inV + b.outV - (a.inV + a.outV)).map((b) => '<div class="sx-row2"><span class="sx-mo">' + esc(b.name) + '</span>' +
+    '<span class="sx-cell"><i>Masuk</i>' + (b.inN ? '<b>' + b.inN + 'x</b> · ' + rp(b.inV) : '-') + '</span><span class="sx-cell"><i>Keluar</i>' + (b.outN ? '<b>' + b.outN + 'x</b> · ' + rp(b.outV) : '-') + '</span></div>').join('') + '</div>';
+  h += '<details class="sx-det"><summary>Lihat semua transfer (' + X.n + ')</summary>' + X.items.map((i) => '<div class="sx-it"><span><em class="' + i.dir + '">' + (i.dir === 'in' ? 'Masuk' : 'Keluar') + '</em> ' + i.day + ' ' + MON_ID[i.mon - 1] + ' · ' + esc(i.bank) + '</span><b>' + rp(i.v) + '</b><small>' + esc(i.desc) + '</small></div>').join('') + '</details>';
+  return h + '<p class="hint2">Dikenali dari nama pada keterangan yang sama dengan nama pemilik rekening dan bank asal/tujuan yang berbeda (atau tertulis "bank lain"). Transfer dari e-wallet seperti DANA dan GoPay tidak dihitung. Biaya admin transfer diabaikan. Bisa meleset kalau nama dipotong atau tidak tertulis di keterangan.</p></div>';
 }
 
 function renderAnalysis(list) {
