@@ -971,6 +971,47 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   }
 
 
+  /* ---------------- BSI Easy Mudharabah (Informasi Mutasi Rekening, EXA BSI) ---------------- */
+  function parseBsiEasyPages(pages, onProgress) {
+    var stmts = [], cur = null;
+    pages.forEach(function (page, pi) {
+      var lines = groupLines(page), text = pageText(lines);
+      if (/Informasi Mutasi Rekening/.test(text) && /Periode\s*:/.test(text)) {
+        cur = newStmt('BSI', pi + 1); stmts.push(cur); cur.descDone = true;
+        var m;
+        if ((m = text.match(/Periode\s*:\s*(\d{4})(\d{2})\d{2}\s*s\/d/))) { cur.year = +m[1]; cur.month = +m[2]; }
+        if ((m = text.match(/Nama Tercetak\s*:\s*([^\n]+)/))) cur.name = m[1].trim();
+        if ((m = text.match(/Nomor Rekening\s*:\s*(\d{6,})/))) cur.accountNo = m[1];
+        var so = text.match(/Saldo Awal \(\d{8}\)\s*:\s*(-?[\d,]+\.\d{2})/), sk = text.match(/Saldo Akhir \(\d{8}\)\s*:\s*(-?[\d,]+\.\d{2})/);
+        if (so && sk) cur.summary = { opening: numEN(so[1]), closing: numEN(sk[1]) };
+        var pr = text.match(/Jenis Produk\s*:\s*([^\n]+)/);
+        if (pr) cur.product = pr[1].trim();
+      }
+      if (!cur) return;
+      cur.pages++;
+      var dates = lines.map(function (l) {
+        var d = l.items.filter(function (t) { return t.x < 90 && /^\d{4}-\d{2}-\d{2}\s*\/?$/.test(t.str.trim()); })[0];
+        return d ? { y: l.y, str: d.str.trim() } : null;
+      }).filter(Boolean);
+      lines.forEach(function (l) {
+        var no = l.items.filter(function (t) { return t.x < 45 && /^\d{1,5}$/.test(t.str.trim()); })[0];
+        if (!no) return;
+        var nums = l.items.filter(function (t) { return t.x > 430 && /^-?[\d,]+\.\d{2}$/.test(t.str.trim()); }).sort(function (a, b) { return a.x - b.x; });
+        if (nums.length < 3) return;
+        var n3 = nums.slice(-3), dm = null;
+        dates.forEach(function (d) { if (d.y >= l.y - 1 && d.y - l.y < 12 && (!dm || d.y < dm.y)) dm = d; });
+        if (!dm) return;
+        var p = dm.str.replace(/\s*\/$/, '').split('-');
+        var desc = pages[pi].items.filter(function (t) { return t.x > 175 && t.x < 400 && t.y > l.y - 8 && t.y < l.y + 6 && t.str.trim(); });
+        desc.sort(function (a, b) { return Math.abs(b.y - a.y) > 2.2 ? b.y - a.y : a.x - b.x; });
+        var d = txt(desc).replace(/^\d{8}[A-Z]{4}IDJA\w+\s+/, '').replace(/\s+/g, ' ').trim();
+        cur.txs.push({ _y: l.y, _pg: pi, day: +p[2], mon: +p[1], debet: Math.abs(numEN(n3[0].str)), kredit: Math.abs(numEN(n3[1].str)), saldo: numEN(n3[2].str), desc: d });
+      });
+      if (onProgress) onProgress(pi + 1, pages.length);
+    });
+    return stmts;
+  }
+
   /* ---------------- CIMB OCTO / CASA (Laporan Rekening/Statement of Account) ---------------- */
   function parseOctoPages(pages, onProgress) {
     var stmts = [], cur = null;
@@ -1307,10 +1348,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   }
 
   /* ---------------- deteksi & pemeriksaan ---------------- */
-  var BANKS = { BRI: parseBriPages, MANDIRI: parseMandiriPages, BCA: parseBcaPages, BSI: parseBsiPages, BJB: parseBjbPages, KOPRA: parseKopraPages, MANDIRI_KONSOL: parseConsPages, SEABANK: parseSeaPages, BNI: parseBniPages, CIMB: parseCimbPages, BSIBIS: parseBsiBisPages, CIMBOCTO: parseOctoPages, GOPAY: parseGopayPages, BNITAPLUS: parseBniTaplusPages };
+  var BANKS = { BRI: parseBriPages, MANDIRI: parseMandiriPages, BCA: parseBcaPages, BSI: parseBsiPages, BJB: parseBjbPages, KOPRA: parseKopraPages, MANDIRI_KONSOL: parseConsPages, SEABANK: parseSeaPages, BNI: parseBniPages, CIMB: parseCimbPages, BSIBIS: parseBsiBisPages, CIMBOCTO: parseOctoPages, GOPAY: parseGopayPages, BNITAPLUS: parseBniTaplusPages, BSIEASY: parseBsiEasyPages };
   function detectBank(pages) {
     for (var pi = 0; pi < pages.length; pi++) {
       var t = pageText(groupLines(pages[pi]));
+      if (/Informasi Mutasi Rekening/.test(t) && /Nama Tercetak/.test(t) && /No Referensi/.test(t)) return 'BSIEASY';
       if (/HISTORI TRANSAKSI/.test(t) && /Transactions List - /.test(t) && /Saldo Akhir/.test(t)) return 'BNITAPLUS';
       if (/Laporan Rekening\/Statement of Account/.test(t) && /No\. Rekening/.test(t) && /Jenis Produk/.test(t)) return 'CIMBOCTO';
       if (/Total pemasukan/.test(t) && /Total pengeluaran/.test(t) && /Total Coins/.test(t)) return 'GOPAY';
@@ -2278,8 +2320,8 @@ function renderResult() {
     else if (s.ok) chip = '<span class="chip ok">Saldo berurutan</span>';
     else chip = '<span class="chip bad">Perlu dicek</span>';
     const problems = [];
-    if (c.hasSummary && !c.debetOk) problems.push('Total debet hasil baca ' + fmt(s.sumDebet) + ', di PDF ' + fmt(s.summary.debet));
-    if (c.hasSummary && !c.kreditOk) problems.push('Total kredit hasil baca ' + fmt(s.sumKredit) + ', di PDF ' + fmt(s.summary.kredit));
+    if (c.hasSummary && c.debetOk === false) problems.push('Total debet hasil baca ' + fmt(s.sumDebet) + ', di PDF ' + fmt(s.summary.debet));
+    if (c.hasSummary && c.kreditOk === false) problems.push('Total kredit hasil baca ' + fmt(s.sumKredit) + ', di PDF ' + fmt(s.summary.kredit));
     if (c.hasSummary && !c.closingOk) problems.push('Saldo akhir hasil baca ' + fmt(s.closing) + ', di PDF ' + fmt(s.summary.closing));
     if (c.runningBad) problems.push(c.runningBad + ' baris saldonya tidak nyambung (mulai baris ke-' + c.firstBadRow + ')');
     if (c.hasSummary && c.countOk === false) problems.push('Jumlah transaksi debet atau kredit tidak sama dengan ringkasan di PDF');
